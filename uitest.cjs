@@ -5,6 +5,8 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { chromium } = require('playwright');
+const jsQRmod = require('jsqr');
+const jsQR = jsQRmod.default || jsQRmod;
 
 const ROOT = __dirname;
 const TYPES = {
@@ -110,9 +112,181 @@ const ok = (l, c, extra = '') => { if (!c) bad++; console.log(`${c ? 'ok  ' : 'F
   ok('and can still sign offline', (await p.inputValue('#code')).length === 246);
   await p.context().setOffline(false);
 
+  // ---- the QR code has to actually scan, not merely appear ----
+  await p.click('nav button[data-v=pay]');
+  await p.fill('#payee', payee);
+  await p.fill('#amount', '3.25');
+  await p.click('#signbtn');
+  await p.waitForTimeout(500);
+  const shown = await p.inputValue('#code');
+  ok('a QR code is drawn for the voucher', await p.isVisible('#qr svg'));
+
+  // Pull the matrix the page itself produced and put it through a real decoder.
+  const matrix = await p.evaluate(async (code) => {
+    const { encodeQR } = await import('./qr.js');
+    const { size, modules } = encodeQR(code);
+    return { size, rows: modules.map((r) => Array.from(r)) };
+  }, shown);
+  const scale = 3, quiet = 4, dim = (matrix.size + quiet * 2) * scale;
+  const px = new Uint8ClampedArray(dim * dim * 4).fill(255);
+  for (let r = 0; r < matrix.size; r++)
+    for (let c = 0; c < matrix.size; c++) {
+      if (!matrix.rows[r][c]) continue;
+      for (let dy = 0; dy < scale; dy++)
+        for (let dx = 0; dx < scale; dx++) {
+          const i = (((r + quiet) * scale + dy) * dim + (c + quiet) * scale + dx) * 4;
+          px[i] = px[i + 1] = px[i + 2] = 0;
+        }
+    }
+  const decoded = jsQR(px, dim, dim);
+  ok('the QR the browser drew decodes back to the voucher', decoded && decoded.data === shown,
+     decoded ? (decoded.data === shown ? '' : 'decoded something else') : 'decoded nothing');
+
+  ok('the code text is hidden behind a button, not dumped on screen',
+     await p.isHidden('#code') && await p.isVisible('#showcode'));
+  await p.click('#showcode');
+  await p.waitForTimeout(200);
+  ok('and can be shown when someone needs to copy it', await p.isVisible('#code'));
+
+  // ---- the signing key must not be readable ----
+  const leaked = await p.evaluate(() => {
+    const out = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      out.push([k, localStorage.getItem(k)]);
+    }
+    return out;
+  });
+  const looksLikeAKey = leaked.some(([, v]) => /"seed"|[0-9a-f]{64}/.test(v || ''));
+  ok('no private key material is left in localStorage', !looksLikeAKey,
+     looksLikeAKey ? JSON.stringify(leaked).slice(0, 120) : '');
+
+  const stored = await p.evaluate(async () => {
+    const { loadDevice } = await import('./store.js');
+    const d = await loadDevice();
+    if (!d) return { found: false };
+    let exported = 'refused';
+    try {
+      await crypto.subtle.exportKey('pkcs8', d.key);
+      exported = 'HANDED IT OVER';
+    } catch { /* good */ }
+    return { found: true, type: d.key.type, extractable: d.key.extractable, exported };
+  });
+  ok('the key is stored as a CryptoKey, not bytes', stored.found && stored.type === 'private');
+  ok('and the browser refuses to export it',
+     stored.extractable === false && stored.exported === 'refused', JSON.stringify(stored));
+
+  // ---- a key from the old version gets moved, not abandoned ----
+  await p.evaluate(async () => {
+    const { forgetDevice } = await import('./store.js');
+    await forgetDevice();
+    // 32 bytes of seed, exactly as the previous version wrote it.
+    const seed = '11'.repeat(32);
+    const pkcs8 = new Uint8Array([
+      0x30,0x2e,0x02,0x01,0x00,0x30,0x05,0x06,0x03,0x2b,0x65,0x70,0x04,0x22,0x04,0x20,
+      ...seed.match(/../g).map((h) => parseInt(h, 16)),
+    ]);
+    const k = await crypto.subtle.importKey('pkcs8', pkcs8, { name: 'Ed25519' }, true, ['sign']);
+    const jwk = await crypto.subtle.exportKey('jwk', k);
+    const pub = atob(jwk.x.replace(/-/g, '+').replace(/_/g, '/'));
+    const pubHex = Array.from(pub, (c) => c.charCodeAt(0).toString(16).padStart(2, '0')).join('');
+    localStorage.setItem('lastmile.device.v1', JSON.stringify({ seed, pub: pubHex }));
+  });
+  await p.reload();
+  await p.waitForTimeout(900);
+  ok('an old localStorage key still opens the wallet', await p.isVisible('#payform'));
+  const migrated = await p.evaluate(async () => {
+    const { loadDevice } = await import('./store.js');
+    const d = await loadDevice();
+    return { moved: !!d, extractable: d ? d.key.extractable : null,
+             legacyGone: localStorage.getItem('lastmile.device.v1') === null };
+  });
+  ok('it is moved into protected storage', migrated.moved && migrated.extractable === false);
+  ok('and the readable copy is wiped', migrated.legacyGone);
+
+  // ---- banking ----
+  // The relayer is stubbed: this is about what the wallet does with each answer,
+  // not about the chain, which the contract repo proves against live testnet.
+  // Start from an empty wallet so the voucher under test is index 0 and the
+  // assertions below are about the one we just made, not one left over.
+  await p.evaluate(() => localStorage.removeItem('lastmile.accepted.v1'));
+  await p.reload();
+  await p.waitForTimeout(700);
+  await p.click('nav button[data-v=pay]');
+  await p.fill('#payee', payee);
+  await p.fill('#amount', '1.5');
+  await p.click('#signbtn');
+  await p.waitForTimeout(400);
+  const toBank = await p.inputValue('#code');
+  await p.click('nav button[data-v=recv]');
+  await p.fill('#inp', toBank);
+  await p.click('#check');
+  await p.waitForTimeout(400);
+  await p.click('#result button');
+  await p.waitForTimeout(400);
+  ok('an accepted voucher shows as not yet banked',
+     (await p.textContent('#pending')).includes('not yet banked'));
+
+  let sentBody = null;
+  await p.route('**/api/redeem', async (route) => {
+    sentBody = route.request().postDataJSON();
+    await route.fulfill({
+      status: 409,
+      contentType: 'application/json',
+      body: JSON.stringify({ error: 'this nonce has already been redeemed', code: 6 }),
+    });
+  });
+  await p.click('[data-bank="0"]');
+  await p.waitForTimeout(600);
+  ok('banking sends the voucher to the relayer', sentBody && sentBody.code === toBank);
+  let wallet = await p.textContent('#pending');
+  ok("the contract's refusal is shown in its own words",
+     wallet.includes('already been redeemed'), wallet.replace(/\s+/g, ' ').slice(0, 90));
+  ok('and the voucher can be retried', await p.isVisible('[data-bank="0"]'));
+
+  await p.unroute('**/api/redeem');
+  await p.route('**/api/redeem', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ hash: 'abc123def4567890', ledger: 42, amount: '15000000' }),
+    }));
+  await p.click('[data-bank="0"]');
+  await p.waitForTimeout(600);
+  wallet = await p.textContent('#pending');
+  ok('a successful bank shows the ledger it landed in', wallet.includes('ledger 42'), wallet.replace(/\s+/g, ' ').slice(0, 90));
+  ok('and stops offering to bank it again', !(await p.isVisible('[data-bank="0"]')));
+
+  await p.reload();
+  await p.waitForTimeout(800);
+  await p.click('nav button[data-v=wallet]');
+  await p.waitForTimeout(300);
+  ok('banked stays banked across a reload', (await p.textContent('#pending')).includes('banked'));
+
+  // Offline, banking must not pretend.
+  await p.context().setOffline(true);
+  await p.evaluate(() => dispatchEvent(new Event('offline')));
+  await p.waitForTimeout(300);
+  await p.click('nav button[data-v=pay]');
+  await p.fill('#payee', payee);
+  await p.fill('#amount', '0.5');
+  await p.click('#signbtn');
+  await p.waitForTimeout(400);
+  const off = await p.inputValue('#code');
+  await p.click('nav button[data-v=recv]');
+  await p.fill('#inp', off);
+  await p.click('#check');
+  await p.waitForTimeout(400);
+  await p.click('#result button');
+  await p.waitForTimeout(400);
+  const offText = await p.textContent('#pending');
+  ok('with no signal the wallet says banking needs a connection',
+     offText.includes('needs a connection'), offText.replace(/\s+/g, ' ').slice(0, 90));
+  await p.context().setOffline(false);
+
   ok('no uncaught page errors', errs.length === 0, errs.join(' | '));
   await b.close();
   server.close();
-  console.log(bad ? `\n${bad} FAILURES` : '\nTHE APP WORKS, INCLUDING OFFLINE');
+  console.log(bad ? `\n${bad} FAILURES` : '\nTHE WALLET WORKS, INCLUDING OFFLINE');
   process.exit(bad ? 1 : 0);
 })();

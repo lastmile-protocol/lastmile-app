@@ -25,16 +25,32 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       # A wallet that has to reach a CDN to draw itself is not an offline
-      # wallet. Every byte the page needs must be in this repository.
+      # wallet. Every byte the page needs must be in this repository. The
+      # relayer under api/ is exempt: talking to the network is its whole job.
       - name: no remote scripts, styles, fonts or images
         run: |
-          if grep -nE '(src|href)="[^"]*//' index.html app.js lastmile.js sw.js; then
+          if grep -nE '(src|href)="[^"]*//' index.html app.js lastmile.js store.js qr.js sw.js; then
             echo "::error::the wallet must load everything from this repository"
             exit 1
           fi
+          echo "the page pulls nothing from anywhere else"
+      - name: the wallet has no imports outside itself
+        run: |
+          if grep -nE "^import .* from '[^.]" app.js lastmile.js store.js qr.js; then
+            echo "::error::the wallet imports a package; it must stay self-contained"
+            exit 1
+          fi
+          echo "every import is a relative path"
       - name: the service worker caches every file the page needs
         run: |
-          for f in index.html app.js lastmile.js manifest.webmanifest icon.svg; do
+          for f in index.html app.js lastmile.js store.js qr.js manifest.webmanifest icon.svg; do
             grep -q "$f" sw.js || { echo "::error::$f is not in the service worker cache list"; exit 1; }
           done
           echo "all files are cached for offline use"
+      - name: banking is never answered from the cache
+        run: |
+          grep -q "api/" sw.js || {
+            echo "::error::the service worker does not exempt /api/; a cached 'already banked' would be a lie"
+            exit 1
+          }
+          echo "the relayer is always asked, never remembered"
