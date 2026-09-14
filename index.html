@@ -64,6 +64,16 @@
     display:flex;justify-content:center}
   .qr svg{width:100%;max-width:216px;height:auto;display:block}
   .handover{font-size:13px;color:var(--dim);margin:14px 0 0}
+  select{width:100%;padding:12px;border:1px solid var(--line);border-radius:10px;
+    background:var(--bg);color:var(--ink);font:inherit}
+  .cashline{margin:8px 0 0;font-size:14px;color:var(--accent);font-weight:600}
+  .cashline.muted{color:var(--dim);font-weight:400}
+  #paycam video{width:100%;max-width:340px;border-radius:10px;background:#000;display:block;
+    margin:10px auto}
+  .trade{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:8px;
+    display:flex;justify-content:space-between;gap:10px;align-items:baseline}
+  .trade .when{font-size:12px;color:var(--dim)}
+  .warn{color:var(--warn)}
   #camera{margin-top:14px}
   #camera video{width:100%;max-width:340px;border-radius:10px;background:#000;display:block;
     margin:0 auto 10px}
@@ -99,8 +109,14 @@
       <h2>Pay someone</h2>
       <label for="payee">Pay to</label>
       <input id="payee" placeholder="G…" autocapitalize="characters" spellcheck="false">
+      <button class="ghost" id="scanpayee">Scan their code</button>
+      <div id="paycam" hidden>
+        <video id="paycamv" playsinline muted></video>
+        <button class="ghost" id="stoppaycam">Stop scanning</button>
+      </div>
       <label for="amount">Amount (XLM)</label>
       <input id="amount" inputmode="decimal" placeholder="2.5">
+      <p class="cashline" id="paycash" hidden></p>
       <button id="signbtn">Sign it</button>
       <p class="note">Works with no signal. Nothing is sent until someone reaches a network.</p>
       <div id="payout" class="hide">
@@ -142,6 +158,51 @@
     <div class="card">
       <h2>Accepted, waiting to bank</h2>
       <div id="pending"><p class="sub">Nothing accepted yet.</p></div>
+    </div>
+
+    <div class="card">
+      <h2>Get paid</h2>
+      <p class="sub">Show this. Nobody types 56 characters.</p>
+      <div class="qr" id="myqr" hidden></div>
+      <p class="note mono" id="myaddr">—</p>
+      <div class="row">
+        <button class="ghost" id="copyaddr">Copy my address</button>
+        <button class="ghost" id="myqrtoggle">Hide the code</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Cash desk</h2>
+      <p class="sub" id="deskstate">Set a rate and this phone can trade cash for XLM.</p>
+      <label for="cur">Currency</label>
+      <select id="cur"></select>
+      <label for="rate">Cash for one XLM</label>
+      <input id="rate" inputmode="decimal" placeholder="1600">
+      <label for="fee">Your fee (%)</label>
+      <input id="fee" inputmode="decimal" placeholder="2">
+      <div class="row">
+        <button id="savedesk">Save</button>
+        <button class="ghost" id="cleardesk">Turn the desk off</button>
+      </div>
+      <p class="note" id="deskerr"></p>
+      <p class="note">Rounding always goes down, both ways, so nobody is ever handed
+      more than they are owed. The amount shown is the amount to hand over.</p>
+    </div>
+
+    <div class="card" id="floatcard">
+      <h2>Your offline float</h2>
+      <p class="big" id="floatamt">—</p>
+      <p class="sub" id="floatwhen">never checked</p>
+      <button class="ghost" id="checkfloat">Check it now</button>
+      <p class="note">Vouchers you sign are paid out of this. Sign past it and the
+      last person to reach the network is not paid — so the figure matters, and so
+      does how old it is.</p>
+    </div>
+
+    <div class="card" id="tradecard" hidden>
+      <h2>Cash trades</h2>
+      <div id="trades"></div>
+      <button class="ghost" id="cleartrades">Clear the log</button>
     </div>
     <div class="card">
       <h2>This device</h2>

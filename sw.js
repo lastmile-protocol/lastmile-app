@@ -1,9 +1,9 @@
 // Cache everything on first visit, then never need the network again.
 // An app about bad connectivity that refuses to open on a bad connection would
 // be a poor joke.
-const V = 'lastmile-v3';
+const V = 'lastmile-v4';
 const FILES = [
-  './', './index.html', './app.js', './lastmile.js', './store.js', './qr.js',
+  './', './index.html', './app.js', './lastmile.js', './store.js', './qr.js', './cash.js',
   './manifest.webmanifest', './icon.svg',
 ];
 

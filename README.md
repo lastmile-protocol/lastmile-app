@@ -20,8 +20,52 @@ point a camera at it. Nothing touches the network.
 offline and tells you the amount and who it came from before you hand over the
 goods. A code altered by even one character is refused.
 
-**Wallet** — what you have accepted, and a button to bank each one when you have
-a connection.
+**Wallet** — what you have accepted, a button to bank each one when you have a
+connection, and the cash desk.
+
+## Cash in, cash out
+
+On and off ramp, in the only form that works where Lastmile is for: a person
+with a cash box. The M-Pesa kiosk, the shop on the corner, the trader at the
+market. No licence, no bank rail, no API — someone who has cash and wants XLM
+standing opposite someone who has XLM and wants cash.
+
+The voucher was already the right instrument for this, which is the neat part.
+An agent taking XLM for cash can **check the signature before opening the cash
+box**, with no signal at all. Nothing else in a village transaction gives them
+that.
+
+Set a currency, a rate and a fee once, and every screen that shows an amount
+also shows the cash:
+
+- **Pay** — "Hand over ₦3,920.00 — ₦80.00 fee kept" under the amount.
+- **Accept** — the same figure on the voucher before you agree to it, so both
+  sides are reading the same number off the same screen.
+- **Wallet** — the day's trades, and your own QR so nobody has to type 56
+  characters to pay you. That code is a [SEP-7](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0007.md)
+  payment request, so other Stellar wallets can read it too.
+
+All of it offline. Rounding goes down in both directions — not to favour the
+agent, but because it has to go *somewhere*, and "you are never handed more than
+you are owed" is the rule both sides can check.
+
+### The risk an agent is actually taking
+
+Opening a cash box against a voucher is opening it against a cheque. The
+signature proves the payer signed; it does not prove they still have the float,
+because they may have signed other vouchers to other people on other nonces and
+only the first to reach the network gets paid.
+
+What bounds it is the payer's float, and the wallet shows yours with **how old
+the reading is** — "checked 3 hours ago", in warning colour once it is stale.
+Offline, that number can only ever be a memory. Saying so is the difference
+between an informed risk and a surprise.
+
+What this is *not*: a fiat rail. Bank transfers and mobile money mean licensing,
+KYC and settlement accounts — a regulated business, not a contract feature.
+Stellar's answer to that is [anchors](https://stellar.org/use-cases/ramps) and
+the SEP-24 standard, and the right move there is to integrate one rather than
+pretend to be one.
 
 ## Banking, and who pays for it
 
@@ -76,11 +120,17 @@ never signs for the payment — only for the transaction envelope that carries i
 npm test
 ```
 
-**32 browser checks** through a real browser at phone size: signing, accepting,
+**49 browser checks** through a real browser at phone size: signing, accepting,
 tampering, a mistyped address, the key surviving a reload, the whole thing
 working with the network switched off, the key being genuinely unexportable, an
-old localStorage key being migrated and wiped, and every state banking can end
-in — including that with no signal the wallet says so rather than pretending.
+old localStorage key being migrated and wiped, every state banking can end in —
+including that with no signal the wallet says so rather than pretending — and
+the cash desk end to end, with every screen made to agree on the same figure.
+
+**16 cash checks.** An agent hands over real money against this arithmetic, so
+it is all integers in the smallest unit each side: currencies with no minor unit,
+fees as basis points, rounding proved to go down in both directions, and a round
+trip proved never to invent money.
 
 **113 QR checks.** A QR encoder produces a convincing picture long before it
 produces a readable one: a wrong generator polynomial, a reversed format field

@@ -284,6 +284,129 @@ const ok = (l, c, extra = '') => { if (!c) bad++; console.log(`${c ? 'ok  ' : 'F
      offText.includes('needs a connection'), offText.replace(/\s+/g, ' ').slice(0, 90));
   await p.context().setOffline(false);
 
+  // ---- the cash desk ----
+  // An agent behind a counter: set a rate once, and every screen that shows an
+  // amount also shows the cash to hand over. None of it needs a network.
+  await p.context().setOffline(true);
+  await p.evaluate(() => dispatchEvent(new Event('offline')));
+  await p.click('nav button[data-v=wallet]');
+  await p.waitForTimeout(300);
+
+  ok('the desk is off until a rate is set',
+     (await p.textContent('#deskstate')).includes('Set a rate'));
+
+  await p.selectOption('#cur', 'NGN');
+  await p.fill('#rate', '1600');
+  await p.fill('#fee', '2');
+  await p.click('#savedesk');
+  await p.waitForTimeout(300);
+  let state = await p.textContent('#deskstate');
+  ok('saving a rate opens the desk', state.includes('₦1,600.00') && state.includes('2%'), state.trim());
+
+  await p.click('nav button[data-v=pay]');
+  await p.fill('#payee', payee);
+  await p.fill('#amount', '2.5');
+  await p.waitForTimeout(300);
+  let cash = await p.textContent('#paycash');
+  // 2.5 XLM at ₦1,600 is ₦4,000, less a 2% fee, so ₦3,920 changes hands.
+  ok('the pay screen says what cash to hand over',
+     cash.includes('₦3,920.00') && cash.includes('₦80.00'), cash.trim());
+
+  await p.fill('#amount', 'nonsense');
+  await p.waitForTimeout(200);
+  ok('a nonsense amount shows no cash figure rather than a wrong one',
+     await p.isHidden('#paycash'));
+  await p.fill('#amount', '2.5');
+  await p.waitForTimeout(200);
+
+  // A voucher arriving at the counter must say the same number.
+  await p.click('#signbtn');
+  await p.waitForTimeout(500);
+  const deskCode = await p.inputValue('#code');
+  await p.click('nav button[data-v=recv]');
+  await p.fill('#inp', deskCode);
+  await p.click('#check');
+  await p.waitForTimeout(500);
+  const res2 = await p.textContent('#result');
+  ok('the accept screen agrees on the cash', res2.includes('₦3,920.00'), res2.replace(/\s+/g, ' ').slice(0, 80));
+  ok('and the button says what is about to happen',
+     (await p.textContent('#result button')).includes('hand over the cash'));
+
+  await p.click('#result button');
+  await p.waitForTimeout(500);
+  const trades = await p.textContent('#trades');
+  ok('the trade is written to the cash log',
+     trades.includes('2.5 XLM') && trades.includes('₦3,920.00'), trades.replace(/\s+/g, ' ').slice(0, 70));
+
+  await p.reload();
+  await p.waitForTimeout(800);
+  await p.click('nav button[data-v=wallet]');
+  await p.waitForTimeout(300);
+  ok('the desk and the log survive a reload',
+     (await p.textContent('#deskstate')).includes('₦1,600.00') &&
+     (await p.textContent('#trades')).includes('₦3,920.00'));
+
+  ok('with no signal the float cannot be checked, and says so',
+     (await p.textContent('#checkfloat')).includes('needs a connection'));
+  ok('and an unchecked float is flagged rather than shown as zero',
+     (await p.textContent('#floatamt')).trim() === '—' &&
+     (await p.textContent('#floatwhen')).includes('never checked'));
+
+  // ---- getting paid without anyone typing an address ----
+  const myAddr = (await p.textContent('#myaddr')).trim();
+  ok('the wallet shows its own address', /^G[A-Z2-7]{55}$/.test(myAddr), myAddr.slice(0, 12));
+  ok('and draws it as a code', await p.isVisible('#myqr svg'));
+
+  const sep7 = await p.evaluate(async () => {
+    const { payUri, readAddress } = await import('./cash.js');
+    const { encodeQR } = await import('./qr.js');
+    const g = document.getElementById('myaddr').textContent.trim();
+    const uri = payUri({ destination: g });
+    const { size, modules } = encodeQR(uri);
+    return { uri, back: readAddress(uri), size, rows: modules.map((r) => Array.from(r)) };
+  });
+  ok('the code is a SEP-7 payment request other wallets can read',
+     sep7.uri.startsWith('web+stellar:pay?destination=G') && sep7.back.address === myAddr);
+
+  {
+    const scale = 3, quiet = 4, dim = (sep7.size + quiet * 2) * scale;
+    const px = new Uint8ClampedArray(dim * dim * 4).fill(255);
+    for (let r = 0; r < sep7.size; r++)
+      for (let c = 0; c < sep7.size; c++) {
+        if (!sep7.rows[r][c]) continue;
+        for (let dy = 0; dy < scale; dy++)
+          for (let dx = 0; dx < scale; dx++) {
+            const i = (((r + quiet) * scale + dy) * dim + (c + quiet) * scale + dx) * 4;
+            px[i] = px[i + 1] = px[i + 2] = 0;
+          }
+      }
+    const got = jsQR(px, dim, dim);
+    ok('and it scans back to the same address',
+       got && got.data === sep7.uri, got ? 'decoded' : 'decoded nothing');
+  }
+
+  const scanned = await p.evaluate(async (g) => {
+    const { readAddress, payUri } = await import('./cash.js');
+    return {
+      bare: readAddress(g)?.address,
+      lower: readAddress(g.toLowerCase())?.address,
+      uri: readAddress(payUri({ destination: g, amount: '7' })),
+      junk: readAddress('just some text'),
+    };
+  }, myAddr);
+  ok('a scanned address is accepted bare, in lower case, or as SEP-7',
+     scanned.bare === myAddr && scanned.lower === myAddr && scanned.uri.address === myAddr &&
+     scanned.uri.amount === '7' && scanned.junk === null);
+
+  await p.click('#cleardesk');
+  await p.waitForTimeout(300);
+  ok('the desk can be turned off again',
+     (await p.textContent('#deskstate')).includes('Set a rate'));
+  await p.click('nav button[data-v=pay]');
+  await p.waitForTimeout(200);
+  ok('and the cash line goes with it', await p.isHidden('#paycash'));
+  await p.context().setOffline(false);
+
   ok('no uncaught page errors', errs.length === 0, errs.join(' | '));
   await b.close();
   server.close();

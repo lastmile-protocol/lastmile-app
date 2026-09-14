@@ -29,21 +29,21 @@ jobs:
       # relayer under api/ is exempt: talking to the network is its whole job.
       - name: no remote scripts, styles, fonts or images
         run: |
-          if grep -nE '(src|href)="[^"]*//' index.html app.js lastmile.js store.js qr.js sw.js; then
+          if grep -nE '(src|href)="[^"]*//' index.html app.js lastmile.js store.js qr.js cash.js sw.js; then
             echo "::error::the wallet must load everything from this repository"
             exit 1
           fi
           echo "the page pulls nothing from anywhere else"
       - name: the wallet has no imports outside itself
         run: |
-          if grep -nE "^import .* from '[^.]" app.js lastmile.js store.js qr.js; then
+          if grep -nE "^import .* from '[^.]" app.js lastmile.js store.js qr.js cash.js; then
             echo "::error::the wallet imports a package; it must stay self-contained"
             exit 1
           fi
           echo "every import is a relative path"
       - name: the service worker caches every file the page needs
         run: |
-          for f in index.html app.js lastmile.js store.js qr.js manifest.webmanifest icon.svg; do
+          for f in index.html app.js lastmile.js store.js qr.js cash.js manifest.webmanifest icon.svg; do
             grep -q "$f" sw.js || { echo "::error::$f is not in the service worker cache list"; exit 1; }
           done
           echo "all files are cached for offline use"

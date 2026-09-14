@@ -7,10 +7,17 @@ import {
 } from './lastmile.js';
 import { loadDevice, saveDevice, forgetDevice } from './store.js';
 import { qrSVG } from './qr.js';
+import {
+  CURRENCIES, isCurrency, toMinor, money, rateFromText, feeFromPercent, feeToPercent,
+  cashForStroops, freshness, payUri, readAddress,
+} from './cash.js';
 
 const $ = (id) => document.getElementById(id);
 const LEGACY = 'lastmile.device.v1'; // where the key used to live, in the clear
 const QUEUE = 'lastmile.accepted.v1';
+const DESK = 'lastmile.desk.v1';     // an agent's currency, rate and fee
+const TRADES = 'lastmile.trades.v1'; // cash that changed hands
+const FLOAT = 'lastmile.float.v1';   // last reading of our own offline float
 
 let device = null;
 
@@ -39,6 +46,7 @@ function net() {
   $('net').textContent = on ? 'online · testnet' : 'no signal — still works';
   $('net').classList.toggle('off', !on);
   renderQueue();
+  if ($('floatamt')) renderFloat();
 }
 addEventListener('online', net); addEventListener('offline', net);
 
@@ -73,6 +81,7 @@ function showDevice() {
   $('mkdev').classList.add('hide');
   $('payform').classList.remove('hide');
   $('devkey').textContent = encodeAddress(device.publicKey);
+  showMyCode();
 }
 
 $('mkdev').onclick = async () => {
@@ -163,26 +172,32 @@ $('nfc').onclick = async () => {
 };
 
 // ---- scanning
+//
+// One camera routine, two jobs: reading a voucher someone is paying you with,
+// and reading the address of someone you are paying. Both beat typing.
+
 let scanStop = null;
 
-$('scan').onclick = async () => {
+async function startScan({ video, panel, hint, onText }) {
+  scanStop?.();
   if (!('BarcodeDetector' in window)) {
-    return alert(
+    alert(
       'This browser cannot read QR codes from the camera. ' +
-      'Paste the code instead, or use Chrome on Android.',
+      'Paste or type the code instead, or use Chrome on Android.',
     );
+    return;
   }
   let stream;
   try {
     stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
   } catch (e) {
-    return alert(`No camera: ${e.message}`);
+    alert(`No camera: ${e.message}`);
+    return;
   }
-  const video = $('cam');
   video.srcObject = stream;
   await video.play();
-  $('camera').hidden = false;
-  $('scanhint').textContent = 'Hold the code steady in the frame.';
+  panel.hidden = false;
+  if (hint) hint.textContent = 'Hold the code steady in the frame.';
 
   const detector = new BarcodeDetector({ formats: ['qr_code'] });
   let running = true;
@@ -190,7 +205,7 @@ $('scan').onclick = async () => {
     running = false;
     for (const t of stream.getTracks()) t.stop();
     video.srcObject = null;
-    $('camera').hidden = true;
+    panel.hidden = true;
     scanStop = null;
   };
 
@@ -201,8 +216,7 @@ $('scan').onclick = async () => {
       if (found.length) {
         const text = found[0].rawValue;
         scanStop();
-        $('inp').value = text;
-        $('check').click();
+        onText(text);
         return;
       }
     } catch {
@@ -211,9 +225,42 @@ $('scan').onclick = async () => {
     requestAnimationFrame(tick);
   };
   requestAnimationFrame(tick);
-};
+}
+
+$('scan').onclick = () =>
+  startScan({
+    video: $('cam'),
+    panel: $('camera'),
+    hint: $('scanhint'),
+    onText: (text) => {
+      $('inp').value = text;
+      $('check').click();
+    },
+  });
 
 $('stopscan').onclick = () => scanStop?.();
+
+$('scanpayee').onclick = () =>
+  startScan({
+    video: $('paycamv'),
+    panel: $('paycam'),
+    onText: (text) => {
+      const got = readAddress(text);
+      if (!got) {
+        $('paysummary').textContent = 'That code is not a Stellar address.';
+        $('payout').classList.remove('hide');
+        return;
+      }
+      $('payee').value = got.address;
+      // A SEP-7 code can carry the amount too, which saves a step at a counter.
+      if (got.amount) {
+        $('amount').value = got.amount;
+        renderPayCash();
+      }
+    },
+  });
+
+$('stoppaycam').onclick = () => scanStop?.();
 
 // ---- accepting
 $('check').onclick = async () => {
@@ -229,21 +276,31 @@ $('check').onclick = async () => {
       box.innerHTML = `<div class="msg bad">This voucher has been altered. Do not accept it.</div>`;
       return;
     }
+    const d = desk();
+    let handOver = '';
+    if (d && !expired) {
+      const { net, fee } = cashForStroops(BigInt(v.auth.amount), BigInt(d.rate), d.feeBps);
+      handOver = `<p class="cashline">Hand over ${money(net, d.currency)}${
+        d.feeBps ? ` — ${money(fee, d.currency)} fee kept` : ''
+      }</p>`;
+    }
     box.innerHTML = `
       <div class="msg ${expired ? 'bad' : 'ok'}">
         <div class="big">${toXLM(v.auth.amount)} XLM</div>
         <div class="sub">signature checks out${expired ? ' — but it expired ' + new Date(when).toLocaleDateString() : ''}</div>
       </div>
+      ${handOver}
       <p class="note mono">from ${short(v.auth.payer)}<br>to ${short(v.auth.payee)}</p>`;
     if (!expired) {
       const b = document.createElement('button');
-      b.textContent = 'Accept it';
+      b.textContent = d ? 'Accept it and hand over the cash' : 'Accept it';
       b.onclick = () => {
         const code = $('inp').value.trim();
         const q = load(QUEUE, []);
         if (q.some((x) => x.code === code)) return alert('Already accepted.');
         q.push({ code, amount: v.auth.amount, at: Date.now(), state: 'held' });
         save(QUEUE, q);
+        if (d) recordTrade(v.auth.amount);
         $('inp').value = ''; box.innerHTML = '';
         document.querySelector('nav button[data-v=wallet]').click();
       };
@@ -361,14 +418,193 @@ function renderQueue() {
   }
 }
 
+// ---- the cash desk
+//
+// An agent with a phone and a cash box. Two directions, one instrument: the
+// customer signs a voucher and walks away with cash, or hands over cash and
+// walks away with a voucher. Neither needs a network at the counter, which is
+// the point -- the counter is where there isn't one.
+
+const desk = () => load(DESK, null);
+
+function fillCurrencies() {
+  const sel = $('cur');
+  if (!sel || sel.options.length) return;
+  for (const [code, c] of Object.entries(CURRENCIES)) {
+    const o = document.createElement('option');
+    o.value = code;
+    o.textContent = `${code} — ${c.name}`;
+    sel.append(o);
+  }
+}
+
+function showDesk() {
+  fillCurrencies();
+  const d = desk();
+  const state = $('deskstate');
+  if (d) {
+    $('cur').value = d.currency;
+    $('rate').value = String(Number(d.rate) / 10 ** CURRENCIES[d.currency].minor);
+    $('fee').value = feeToPercent(d.feeBps);
+    state.textContent =
+      `Open. One XLM buys ${money(d.rate, d.currency)}, your fee is ${feeToPercent(d.feeBps)}%.`;
+    state.classList.remove('warn');
+  } else {
+    state.textContent = 'Set a rate and this phone can trade cash for XLM.';
+  }
+  renderPayCash();
+  renderTrades();
+}
+
+$('savedesk').onclick = () => {
+  const err = $('deskerr');
+  err.textContent = '';
+  try {
+    const currency = $('cur').value;
+    if (!isCurrency(currency)) throw new Error('Pick a currency');
+    const rate = rateFromText($('rate').value, currency);
+    if (rate <= 0n) throw new Error('A rate has to be more than nothing');
+    const feeBps = feeFromPercent($('fee').value || '0');
+    save(DESK, { currency, rate: rate.toString(), feeBps });
+    showDesk();
+  } catch (e) {
+    err.textContent = e.message;
+  }
+};
+
+$('cleardesk').onclick = () => {
+  try { localStorage.removeItem(DESK); } catch {}
+  $('rate').value = ''; $('fee').value = '';
+  showDesk();
+};
+
+/** What the agent hands over for the amount currently typed in. */
+function renderPayCash() {
+  const el = $('paycash');
+  if (!el) return;
+  const d = desk();
+  const raw = $('amount').value.trim();
+  if (!d || !raw) { el.hidden = true; return; }
+  try {
+    const stroops = toStroops(raw);
+    const { net, fee } = cashForStroops(stroops, BigInt(d.rate), d.feeBps);
+    el.hidden = false;
+    el.classList.remove('muted');
+    el.textContent = d.feeBps
+      ? `Hand over ${money(net, d.currency)} — ${money(fee, d.currency)} fee kept`
+      : `Hand over ${money(net, d.currency)}`;
+  } catch {
+    el.hidden = true;
+  }
+}
+$('amount').addEventListener('input', renderPayCash);
+
+// ---- getting paid: show a code instead of reading out 56 characters
+function showMyCode() {
+  if (!device) return;
+  const g = encodeAddress(device.publicKey);
+  $('myaddr').textContent = g;
+  try {
+    // SEP-7, so another Stellar wallet can read this too, not only ours.
+    $('myqr').innerHTML = qrSVG(payUri({ destination: g }));
+    $('myqr').hidden = false;
+  } catch {
+    $('myqr').hidden = true;
+  }
+}
+
+$('copyaddr').onclick = async () => {
+  try {
+    await navigator.clipboard.writeText(encodeAddress(device.publicKey));
+    $('copyaddr').textContent = 'Copied';
+    setTimeout(() => ($('copyaddr').textContent = 'Copy my address'), 1500);
+  } catch { /* the address is on screen either way */ }
+};
+
+$('myqrtoggle').onclick = () => {
+  const hidden = $('myqr').hidden;
+  $('myqr').hidden = !hidden;
+  $('myqrtoggle').textContent = hidden ? 'Hide the code' : 'Show the code';
+};
+
+// ---- our own float, and how old the reading is
+function renderFloat() {
+  const f = load(FLOAT, null);
+  const fresh = freshness(f?.at);
+  $('floatamt').textContent = f ? `${toXLM(f.float)} XLM` : '—';
+  $('floatwhen').textContent = f ? `checked ${fresh.text}` : 'never checked';
+  $('floatwhen').classList.toggle('warn', !f || fresh.stale);
+  $('checkfloat').disabled = !navigator.onLine;
+  $('checkfloat').textContent = navigator.onLine ? 'Check it now' : 'Checking needs a connection';
+}
+
+$('checkfloat').onclick = async () => {
+  const btn = $('checkfloat');
+  btn.disabled = true;
+  btn.textContent = 'Checking…';
+  try {
+    const res = await fetch('api/vault?payer=' + encodeURIComponent(encodeAddress(device.publicKey)));
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error ?? `The relayer answered ${res.status}.`);
+    save(FLOAT, { float: body.float, bond: body.bond, at: Date.now() });
+  } catch (e) {
+    $('floatwhen').textContent = e.message;
+    $('floatwhen').classList.add('warn');
+    btn.disabled = false;
+    btn.textContent = 'Try again';
+    return;
+  }
+  renderFloat();
+};
+
+// ---- the day's cash trades
+function renderTrades() {
+  const t = load(TRADES, []);
+  const card = $('tradecard');
+  if (!card) return;
+  card.hidden = t.length === 0;
+  if (!t.length) return;
+  $('trades').innerHTML = t
+    .slice()
+    .reverse()
+    .map(
+      (x) => `<div class="trade">
+        <span><strong>${toXLM(x.amount)} XLM</strong> for ${x.cash}</span>
+        <span class="when">${new Date(x.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+      </div>`,
+    )
+    .join('');
+}
+
+$('cleartrades').onclick = () => {
+  if (!confirm('Clear the cash log? The vouchers themselves are not affected.')) return;
+  try { localStorage.removeItem(TRADES); } catch {}
+  renderTrades();
+};
+
+function recordTrade(amountStroops) {
+  const d = desk();
+  if (!d) return;
+  const { net } = cashForStroops(BigInt(amountStroops), BigInt(d.rate), d.feeBps);
+  const t = load(TRADES, []);
+  t.push({ amount: String(amountStroops), cash: money(net, d.currency), at: Date.now() });
+  save(TRADES, t.slice(-200));
+  renderTrades();
+}
+
 // ---- views
 for (const b of document.querySelectorAll('nav button')) {
   b.onclick = () => {
     for (const o of document.querySelectorAll('nav button')) o.removeAttribute('aria-current');
     b.setAttribute('aria-current', 'page');
     for (const v of ['pay', 'recv', 'wallet']) $(`v-${v}`).classList.toggle('hide', v !== b.dataset.v);
-    if (b.dataset.v !== 'recv') scanStop?.();
-    if (b.dataset.v === 'wallet') renderQueue();
+    if (b.dataset.v !== 'recv' && b.dataset.v !== 'pay') scanStop?.();
+    if (b.dataset.v === 'wallet') {
+      renderQueue();
+      showDesk();
+      showMyCode();
+      renderFloat();
+    }
   };
 }
 
@@ -376,3 +612,5 @@ if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catc
 net();
 restore();
 renderQueue();
+showDesk();
+renderFloat();
