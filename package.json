@@ -1,0 +1,14 @@
+{
+  "name": "lastmile-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The wallet itself has no dependencies and loads nothing from the network. These are for the browser test only.",
+  "scripts": {
+    "test": "node uitest.cjs",
+    "serve": "node -e \"require('http').createServer((q,s)=>require('fs').createReadStream('.'+(q.url==='/'?'/index.html':q.url)).on('error',()=>s.writeHead(404).end()).pipe(s)).listen(8899,()=>console.log('http://localhost:8899'))\""
+  },
+  "devDependencies": {
+    "@stellar/stellar-sdk": "^17.0.1",
+    "playwright": "^1.63.0"
+  }
+}

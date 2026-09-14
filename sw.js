@@ -1,8 +1,11 @@
 // Cache everything on first visit, then never need the network again.
 // An app about bad connectivity that refuses to open on a bad connection would
 // be a poor joke.
-const V = 'lastmile-v1';
-const FILES = ['./', './index.html', './app.js', './lastmile.js', './manifest.webmanifest'];
+const V = 'lastmile-v2';
+const FILES = [
+  './', './index.html', './app.js', './lastmile.js',
+  './manifest.webmanifest', './icon.svg',
+];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(V).then((c) => c.addAll(FILES)).then(() => self.skipWaiting()));
