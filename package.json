@@ -15,5 +15,6 @@
   },
   "dependencies": {
     "@lastmile/sdk": "github:lastmile-protocol/lastmile-sdk"
-  }
+  },
+  "type": "module"
 }
