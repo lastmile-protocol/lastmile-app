@@ -11,6 +11,7 @@ import {
   CURRENCIES, isCurrency, toMinor, money, rateFromText, feeFromPercent, feeToPercent,
   cashForStroops, freshness, payUri, readAddress,
 } from './cash.js';
+import { useAnchor, plainly, settled, offered, rampAddress } from './ramp.js';
 
 const $ = (id) => document.getElementById(id);
 const LEGACY = 'lastmile.device.v1'; // where the key used to live, in the clear
@@ -18,6 +19,8 @@ const QUEUE = 'lastmile.accepted.v1';
 const DESK = 'lastmile.desk.v1';     // an agent's currency, rate and fee
 const TRADES = 'lastmile.trades.v1'; // cash that changed hands
 const FLOAT = 'lastmile.float.v1';   // last reading of our own offline float
+const RAMPS = 'lastmile.ramps.v1';   // anchor deposits and withdrawals in flight
+const ANCHOR = 'lastmile.anchor.v1'; // the anchor domain this wallet last used
 
 let device = null;
 
@@ -592,12 +595,212 @@ function recordTrade(amountStroops) {
   renderTrades();
 }
 
+
+// ---- the bank ramp
+//
+// Everything here is online by definition: an anchor is a business with a bank
+// account. The wallet's own half stays offline, which is why this is a separate
+// screen and not a step in the pay flow.
+
+let anchor = null;       // the bound anchor, if Connect has succeeded
+let rampKind = 'deposit';
+
+const rampErr = (el, msg) => { const e = $(el); e.textContent = msg ?? ''; e.className = msg ? 'note bad' : 'note'; };
+
+async function signWithDevice(hash) {
+  if (!device) throw new Error('Create a signing key first.');
+  return new Uint8Array(await crypto.subtle.sign({ name: 'Ed25519' }, device.key, hash));
+}
+
+$('anchorgo').onclick = async () => {
+  const domain = $('anchordom').value.trim().toLowerCase();
+  rampErr('anchorerr', '');
+  $('anchorgo').disabled = true;
+  $('anchorgo').textContent = 'Connecting…';
+  try {
+    anchor = await useAnchor(domain);
+    save(ANCHOR, domain);
+    $('anchordomshow').textContent = domain;
+    $('anchorkey').textContent = anchor.signingKey;
+    $('anchorwho').hidden = false;
+    $('rampform').hidden = false;
+    fillAssets();
+  } catch (e) {
+    anchor = null;
+    $('anchorwho').hidden = true;
+    $('rampform').hidden = true;
+    rampErr('anchorerr', e.message);
+  } finally {
+    $('anchorgo').disabled = false;
+    $('anchorgo').textContent = 'Connect';
+  }
+};
+
+function fillAssets() {
+  const list = offered(rampKind === 'deposit' ? anchor.deposit : anchor.withdraw);
+  const sel = $('rampasset');
+  sel.innerHTML = '';
+  for (const a of list) {
+    const o = document.createElement('option');
+    o.value = a.code;
+    o.textContent = a.code === 'native' ? 'XLM' : a.code;
+    sel.append(o);
+  }
+  if (!list.length) {
+    const o = document.createElement('option');
+    o.textContent = `This anchor does not ${rampKind === 'deposit' ? 'take money in' : 'pay money out'}`;
+    sel.append(o);
+  }
+  sel.disabled = !list.length;
+  $('rampgo').disabled = !list.length;
+  showLimits();
+}
+
+function showLimits() {
+  if (!anchor) return;
+  const code = $('rampasset').value;
+  const a = offered(rampKind === 'deposit' ? anchor.deposit : anchor.withdraw).find((x) => x.code === code);
+  if (!a) { $('ramplimits').textContent = ''; return; }
+  const bits = [];
+  if (a.min != null) bits.push(`at least ${a.min}`);
+  if (a.max != null) bits.push(`at most ${a.max}`);
+  if (a.fixedFee != null) bits.push(`fee ${a.fixedFee}`);
+  if (a.percentFee != null) bits.push(`fee ${a.percentFee}%`);
+  $('ramplimits').textContent = bits.length ? bits.join(' · ') : 'No limits published.';
+}
+$('rampasset').onchange = showLimits;
+
+function pickKind(kind) {
+  rampKind = kind;
+  $('depbtn').className = kind === 'deposit' ? '' : 'ghost';
+  $('wdrbtn').className = kind === 'withdraw' ? '' : 'ghost';
+  $('rampgo').textContent = 'Open the anchor';
+  if (anchor) fillAssets();
+}
+$('depbtn').onclick = () => pickKind('deposit');
+$('wdrbtn').onclick = () => pickKind('withdraw');
+
+$('rampgo').onclick = async () => {
+  rampErr('ramperr', '');
+  if (!anchor) return rampErr('ramperr', 'Connect to an anchor first.');
+  if (!device) return rampErr('ramperr', 'Create a signing key first — the anchor pays into it.');
+
+  const account = rampAddress(device.publicKey);
+  const assetCode = $('rampasset').value;
+  const amount = $('rampamt').value.trim();
+
+  $('rampgo').disabled = true;
+  $('rampgo').textContent = 'Proving who you are…';
+  try {
+    // The device key signs a hash it was shown, and only after the anchor's own
+    // signature over that hash checked out. See ramp.js.
+    const token = await anchor.authenticate(account, signWithDevice);
+
+    $('rampgo').textContent = 'Opening…';
+    const { url, id } = await anchor.start(rampKind, {
+      assetCode, token, account, amount: amount || undefined,
+    });
+
+    const jobs = load(RAMPS, []);
+    jobs.unshift({
+      id, url, kind: rampKind, assetCode, amount,
+      homeDomain: anchor.homeDomain, token, at: Date.now(), status: 'incomplete',
+    });
+    save(RAMPS, jobs.slice(0, 30));
+    renderRamps();
+
+    // A popup blocker is not an error worth a red box: the link is in the list.
+    window.open(url, '_blank', 'noopener');
+  } catch (e) {
+    rampErr('ramperr', e.message);
+  } finally {
+    $('rampgo').disabled = false;
+    $('rampgo').textContent = 'Open the anchor';
+  }
+};
+
+function renderRamps() {
+  const jobs = load(RAMPS, []);
+  $('rampjobs').hidden = jobs.length === 0;
+  const box = $('rampqueue');
+  box.innerHTML = '';
+  for (const [i, j] of jobs.entries()) {
+    const el = document.createElement('div');
+    el.className = 'anchorjob';
+    const done = j.status === 'completed';
+    const bad = ['error', 'expired', 'no_market', 'too_small', 'too_large'].includes(j.status);
+    el.innerHTML = `
+      <div class="head">
+        <strong>${j.kind === 'deposit' ? 'Cash in' : 'Cash out'} ${j.amount ? j.amount + ' ' : ''}${j.assetCode === 'native' ? 'XLM' : j.assetCode}</strong>
+        <span class="state ${done ? 'ok' : bad ? 'bad' : ''}">${plainly(j.status)}</span>
+      </div>
+      <p class="note">${j.homeDomain} · ${freshness(j.at).text}</p>`;
+    if (!settled(j.status)) {
+      const a = document.createElement('a');
+      a.href = j.url; a.target = '_blank'; a.rel = 'noopener';
+      a.textContent = 'Open the anchor page';
+      a.className = 'note';
+      el.append(a);
+    }
+    const b = document.createElement('button');
+    b.className = 'ghost';
+    b.textContent = 'Forget this one';
+    b.onclick = () => {
+      const now = load(RAMPS, []);
+      now.splice(i, 1);
+      save(RAMPS, now);
+      renderRamps();
+    };
+    el.append(b);
+    box.append(el);
+  }
+}
+
+$('ramprefresh').onclick = async () => {
+  const jobs = load(RAMPS, []);
+  $('ramprefresh').disabled = true;
+  $('ramprefresh').textContent = 'Checking…';
+  try {
+    for (const j of jobs) {
+      if (settled(j.status) || !j.token) continue;
+      try {
+        const { transaction } = await anchorFor(j.homeDomain).then((a) => a.status(j.id, j.token));
+        if (transaction?.status) j.status = transaction.status;
+        if (transaction?.amount_in) j.amountIn = transaction.amount_in;
+      } catch (e) {
+        j.note = e.message;
+      }
+    }
+    save(RAMPS, jobs);
+    renderRamps();
+  } finally {
+    $('ramprefresh').disabled = false;
+    $('ramprefresh').textContent = 'Check again';
+  }
+};
+
+// Polling a job may outlive the binding that created it -- the wallet was
+// closed, the anchor was changed. Rebind on demand rather than lose the job.
+const bindings = new Map();
+async function anchorFor(homeDomain) {
+  if (anchor?.homeDomain === homeDomain) return anchor;
+  if (!bindings.has(homeDomain)) bindings.set(homeDomain, useAnchor(homeDomain));
+  return bindings.get(homeDomain);
+}
+
+function restoreRamp() {
+  const last = load(ANCHOR, null);
+  if (typeof last === 'string' && last) $('anchordom').value = last;
+  pickKind('deposit');
+  renderRamps();
+}
+
 // ---- views
 for (const b of document.querySelectorAll('nav button')) {
   b.onclick = () => {
     for (const o of document.querySelectorAll('nav button')) o.removeAttribute('aria-current');
     b.setAttribute('aria-current', 'page');
-    for (const v of ['pay', 'recv', 'wallet']) $(`v-${v}`).classList.toggle('hide', v !== b.dataset.v);
+    for (const v of ['pay', 'recv', 'wallet', 'ramp']) $(`v-${v}`).classList.toggle('hide', v !== b.dataset.v);
     if (b.dataset.v !== 'recv' && b.dataset.v !== 'pay') scanStop?.();
     if (b.dataset.v === 'wallet') {
       renderQueue();
@@ -605,6 +808,7 @@ for (const b of document.querySelectorAll('nav button')) {
       showMyCode();
       renderFloat();
     }
+    if (b.dataset.v === 'ramp') renderRamps();
   };
 }
 
@@ -614,3 +818,4 @@ restore();
 renderQueue();
 showDesk();
 renderFloat();
+restoreRamp();

@@ -86,6 +86,14 @@
   .queued .state.bad{color:var(--bad)}
   .queued .state.busy{color:var(--warn)}
   .queued button{margin-top:10px;padding:9px}
+  .anchorjob{border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:10px}
+  .anchorjob .head{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+  .anchorjob .state{font-size:12px;color:var(--dim)}
+  .anchorjob .state.ok{color:var(--ok)}
+  .anchorjob .state.bad{color:var(--bad)}
+  .anchorjob a{color:var(--accent)}
+  .anchorjob button{margin-top:10px;padding:9px}
+  nav button{padding:14px 2px;font-size:12.5px}
   [hidden]{display:none!important}
 </style>
 </head>
@@ -211,12 +219,54 @@
       <p class="note">Testnet only. Unaudited. No real money.</p>
     </div>
   </section>
+
+  <section id="v-ramp" class="hide">
+    <div class="card">
+      <h2>Bank ramp</h2>
+      <p class="sub">Cash in and out through a licensed anchor: bank transfer, mobile
+      money, card. The cash desk needs nobody's permission; this does, so it is
+      somebody else's business and this wallet just talks to it.</p>
+      <label for="anchordom">Anchor domain</label>
+      <input id="anchordom" value="testanchor.stellar.org" autocapitalize="off" spellcheck="false" inputmode="url">
+      <button id="anchorgo">Connect</button>
+      <p class="note" id="anchorerr"></p>
+      <div id="anchorwho" hidden>
+        <p class="note">Signing key, read from <span id="anchordomshow"></span> itself:</p>
+        <p class="mono" id="anchorkey">—</p>
+      </div>
+    </div>
+
+    <div class="card" id="rampform" hidden>
+      <h2>Move money</h2>
+      <div class="row">
+        <button id="depbtn">Cash in</button>
+        <button class="ghost" id="wdrbtn">Cash out</button>
+      </div>
+      <label for="rampasset">Asset</label>
+      <select id="rampasset"></select>
+      <p class="note" id="ramplimits"></p>
+      <label for="rampamt">Amount</label>
+      <input id="rampamt" inputmode="decimal" placeholder="25">
+      <button id="rampgo">Open the anchor</button>
+      <p class="note" id="ramperr"></p>
+      <p class="note">The anchor pays into this device's own address, which only this
+      device can sign for. Identity checks and bank details happen on the anchor's
+      page, not here — that is the point of handing off.</p>
+    </div>
+
+    <div class="card" id="rampjobs" hidden>
+      <h2>In flight</h2>
+      <div id="rampqueue"></div>
+      <button class="ghost" id="ramprefresh">Check again</button>
+    </div>
+  </section>
 </div>
 
 <nav>
   <button data-v="pay" aria-current="page">Pay</button>
   <button data-v="recv">Accept</button>
   <button data-v="wallet">Wallet</button>
+  <button data-v="ramp">Ramp</button>
 </nav>
 
 <script type="module" src="app.js"></script>
