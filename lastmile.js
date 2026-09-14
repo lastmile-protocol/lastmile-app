@@ -168,7 +168,13 @@ const PKCS8_PREFIX = Uint8Array.from([
   0x04, 0x22, 0x04, 0x20,
 ]);
 
-/** Import a 32-byte seed as a signing key. */
+/**
+ * Import a 32-byte seed as a signing key.
+ *
+ * Only used to carry a key made by an older version of this app -- one that
+ * kept the seed in localStorage -- into storage that cannot give it back.
+ * Nothing creates a key this way any more.
+ */
 export async function importDevice(seed) {
   if (seed.length !== 32) throw new Error('a device seed is 32 bytes');
   const pkcs8 = new Uint8Array(PKCS8_PREFIX.length + 32);
@@ -183,10 +189,16 @@ export async function importDevice(seed) {
  * This is the key that signs while you have no signal. It is deliberately not
  * your Stellar account key: if the phone is stolen you revoke a device, you do
  * not lose an account.
+ *
+ * The private half is generated non-extractable and never exists as bytes
+ * anywhere this code can reach. The browser will sign with it on request and
+ * refuse to hand it over, so a script that gets onto this origin can spend
+ * while it is there but cannot walk away with the key.
  */
 export async function newDevice() {
-  const seed = crypto.getRandomValues(new Uint8Array(32));
-  return { seed, key: await importDevice(seed), publicKey: await publicKeyOf(seed) };
+  const pair = await crypto.subtle.generateKey({ name: 'Ed25519' }, false, ['sign', 'verify']);
+  const publicKey = new Uint8Array(await crypto.subtle.exportKey('raw', pair.publicKey));
+  return { key: pair.privateKey, publicKey };
 }
 
 /**
