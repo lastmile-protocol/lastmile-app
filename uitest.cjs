@@ -407,6 +407,160 @@ const ok = (l, c, extra = '') => { if (!c) bad++; console.log(`${c ? 'ok  ' : 'F
   ok('and the cash line goes with it', await p.isHidden('#paycash'));
   await p.context().setOffline(false);
 
+
+  // ---------------------------------------------------------------- the ramp
+  //
+  // The wallet cannot read a SEP-10 challenge -- no XDR decoder, and it is not
+  // getting one. It signs a hash the relayer hands it, and the only thing
+  // standing between that and blind signing is a check that the anchor signed
+  // those exact bytes. So the interesting test is not "does cash-in work". It is
+  // "can a relayer that has been got at get a signature out of this wallet".
+
+  const { Keypair } = require('@stellar/stellar-sdk');
+  const anchorKp = Keypair.random();
+  const impostorKp = Keypair.random();
+
+  const TOML = `
+VERSION="2.0.0"
+NETWORK_PASSPHRASE="Test SDF Network ; September 2015"
+SIGNING_KEY="${anchorKp.publicKey()}"
+WEB_AUTH_ENDPOINT="https://anchor.test/auth"
+TRANSFER_SERVER_SEP0024="https://anchor.test/sep24"
+`;
+
+  // A relayer under our control, so each way it could misbehave can be tried.
+  let relayer = { signingKey: anchorKp.publicKey(), signWith: anchorKp };
+  let tokenCalls = 0;
+
+  // SEP-1 requires stellar.toml to be CORS-readable, which is the only reason a
+  // browser can check the anchor's identity for itself. Serve it the same way.
+  await p.route('**/.well-known/stellar.toml', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'text/plain',
+      headers: { 'access-control-allow-origin': '*' },
+      body: TOML,
+    }));
+
+  await p.route('**/api/anchor', async (route) => {
+    const body = JSON.parse(route.request().postData());
+    const send = (o) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(o) });
+    if (body.action === 'connect') {
+      return send({
+        signingKey: relayer.signingKey,
+        networkPassphrase: 'Test SDF Network ; September 2015',
+        deposit: { USDC: { enabled: true, min_amount: 1, max_amount: 500 }, SRT: { enabled: false } },
+        withdraw: { USDC: { enabled: true } },
+        currencies: [{ code: 'USDC' }],
+      });
+    }
+    if (body.action === 'challenge') {
+      const hash = require('crypto').randomBytes(32);
+      // Keypair.sign returns a Uint8Array in stellar-sdk 17, and
+      // Uint8Array.toString('hex') is "147,211,34,..." with no complaint. The
+      // first version of this test did exactly that, and the forged-challenge
+      // check below passed because *every* signature was unreadable -- which is
+      // a test that proves nothing while looking like it proves everything.
+      const sign = (kp, msg) => Buffer.from(kp.sign(msg)).toString('hex');
+      return send({
+        transaction: 'AAAA-pretend',
+        networkPassphrase: 'Test SDF Network ; September 2015',
+        hash: hash.toString('hex'),
+        anchorSignature: sign(relayer.signWith, hash),
+        account: body.account,
+      });
+    }
+    if (body.action === 'token') { tokenCalls++; return send({ token: 'jwt.for.you' }); }
+    if (body.action === 'start') return send({ url: 'https://anchor.test/i/abc', id: 'tx-1' });
+    if (body.action === 'status') return send({ transaction: { id: 'tx-1', status: 'pending_user_transfer_start' } });
+    return route.fulfill({ status: 400, body: '{"error":"no"}' });
+  });
+
+  await p.click('nav button[data-v=ramp]');
+  await p.waitForTimeout(200);
+  ok('the ramp screen is reachable', await p.isVisible('#anchordom'));
+  ok('and nothing is offered before an anchor is chosen', await p.isHidden('#rampform'));
+
+  await p.fill('#anchordom', 'anchor.test');
+  await p.click('#anchorgo');
+  await p.waitForTimeout(500);
+  ok('connecting shows the key read from the anchor itself',
+     (await p.textContent('#anchorkey')) === anchorKp.publicKey(),
+     await p.textContent('#anchorerr'));
+  ok('and the ramp opens', await p.isVisible('#rampform'));
+
+  const assets = await p.$$eval('#rampasset option', (os) => os.map((o) => o.value));
+  ok('only assets the anchor actually takes are offered',
+     assets.length === 1 && assets[0] === 'USDC', assets.join(','));
+  ok('the published limits are shown',
+     (await p.textContent('#ramplimits')).includes('at least 1'));
+
+  // The attack. The relayer keeps a real-looking flow but signs the challenge
+  // with a key that is not the anchor's.
+  relayer = { signingKey: anchorKp.publicKey(), signWith: impostorKp };
+  tokenCalls = 0;
+  await p.fill('#rampamt', '25');
+  await p.click('#rampgo');
+  await p.waitForTimeout(700);
+  ok('a forged challenge is refused',
+     (await p.textContent('#ramperr')).includes('has not signed the challenge'));
+  ok('and nothing was signed or sent', tokenCalls === 0);
+  ok('and no job is recorded for it', await p.isHidden('#rampjobs'));
+
+  // The relayer lying about who the anchor is, which the wallet can catch
+  // because it read stellar.toml for itself.
+  relayer = { signingKey: impostorKp.publicKey(), signWith: anchorKp };
+  await p.click('#anchorgo');
+  await p.waitForTimeout(500);
+  ok('a relayer that reports a different signing key is stopped',
+     (await p.textContent('#anchorerr')).includes('Stopping here'));
+
+  // And now the honest case.
+  relayer = { signingKey: anchorKp.publicKey(), signWith: anchorKp };
+  await p.click('#anchorgo');
+  await p.waitForTimeout(500);
+  await p.fill('#rampamt', '25');
+  await p.click('#rampgo');
+  await p.waitForTimeout(800);
+  ok('an honest anchor gets a signature and a session', tokenCalls === 1, await p.textContent('#ramperr'));
+  ok('the deposit shows up in flight', await p.isVisible('#rampjobs'));
+  const job = await p.textContent('#rampqueue');
+  ok('and says what the anchor is waiting for, in words',
+     job.includes('Cash in') && job.includes('25 USDC'), job.replace(/\s+/g, ' ').slice(0, 90));
+  // A template literal will happily print "[object Object]" and call it a day.
+  ok('with no object stringified into the page', !job.includes('[object'), job.replace(/\s+/g, ' ').slice(0, 90));
+
+  await p.click('#ramprefresh');
+  await p.waitForTimeout(600);
+  ok('checking again reports the status in plain language',
+     (await p.textContent('#rampqueue')).includes('Waiting for you to send the money'));
+
+  await p.reload();
+  await p.waitForTimeout(700);
+  await p.click('nav button[data-v=ramp]');
+  await p.waitForTimeout(200);
+  ok('the job survives a reload', (await p.textContent('#rampqueue')).includes('Cash in'));
+  ok('and the anchor domain is remembered',
+     (await p.inputValue('#anchordom')) === 'anchor.test');
+
+  // A reload does not keep the binding, and should not: the anchor's signing key
+  // has to be read fresh before anything is signed against it.
+  ok('but the ramp stays shut until the anchor is checked again', await p.isHidden('#rampform'));
+
+  await p.click('#anchorgo');
+  await p.waitForTimeout(500);
+  await p.click('#wdrbtn');
+  await p.waitForTimeout(200);
+  const outAssets = await p.$$eval('#rampasset option', (os) => os.map((o) => o.value));
+  ok('cash out offers what the anchor pays out, not what it takes in',
+     outAssets.length === 1 && outAssets[0] === 'USDC', outAssets.join(','));
+  ok('and its limits are whatever that side publishes',
+     (await p.textContent('#ramplimits')) === 'No limits published.',
+     await p.textContent('#ramplimits'));
+
+  await p.unroute('**/api/anchor');
+  await p.unroute('**/.well-known/stellar.toml');
+
   ok('no uncaught page errors', errs.length === 0, errs.join(' | '));
   await b.close();
   server.close();
