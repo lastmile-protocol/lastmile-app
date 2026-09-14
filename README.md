@@ -23,6 +23,10 @@ goods. A code altered by even one character is refused.
 **Wallet** — what you have accepted, a button to bank each one when you have a
 connection, and the cash desk.
 
+**Ramp** — cash in and out through a licensed anchor, when a bank rail is what
+you need and a person with a cash box is not. Online by definition; everything
+above still is not.
+
 ## Cash in, cash out
 
 On and off ramp, in the only form that works where Lastmile is for: a person
@@ -48,6 +52,57 @@ also shows the cash:
 All of it offline. Rounding goes down in both directions — not to favour the
 agent, but because it has to go *somewhere*, and "you are never handed more than
 you are owed" is the rule both sides can check.
+
+## The other ramp: banks, through an anchor
+
+The cash desk works because it needs nobody's permission. Bank transfers, mobile
+money and cards are the opposite: they need a licence, and Lastmile does not have
+one. Stellar's answer is [anchors](https://developers.stellar.org/docs/learn/fundamentals/anchors) —
+regulated businesses that take fiat in and issue tokens out — so the **Ramp**
+screen integrates one rather than pretending to be one.
+
+Type an anchor's domain, connect, and the wallet shows what that anchor will
+take in and pay out, with its published limits. Choosing an amount opens the
+anchor's own hosted page for the identity checks and the bank details, which is
+exactly where that belongs. The wallet then tracks the transfer in plain words —
+"Waiting for you to send the money", "Moving through the bank" — instead of
+SEP-24 status strings.
+
+### The part worth being careful about
+
+Authenticating to an anchor ([SEP-10](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0010.md))
+means signing a challenge *transaction*. This wallet has no XDR decoder and is
+not getting one — it is 300 lines of hand-rolled crypto so it fits on a phone
+with no signal. So the protocol runs on the relayer and the relayer hands the
+phone 32 bytes to sign.
+
+That is blind signing, unless something stops it being blind. What stops it:
+
+1. The wallet fetches the anchor's `stellar.toml` **itself**, over its own
+   connection, and reads `SIGNING_KEY` from it. SEP-1 requires that file to be
+   CORS-readable, which is what makes this possible from a browser at all.
+2. Every challenge comes back with the anchor's own signature over the exact
+   32 bytes in question, and the wallet checks it against *that* key.
+3. Only then is the device key asked for anything.
+
+So a relayer that has been got at cannot get a signature out of the phone: a
+hash it invented carries no anchor signature, and a signing key it reports that
+disagrees with the one the anchor publishes stops the flow before a challenge is
+even requested. Both are tested by doing them.
+
+What this does still trust, stated plainly: the **anchor** not to sign something
+that is not a challenge. That is the party the user chose when they typed the
+domain. The relayer, the network and we ourselves are not trusted with it. On the
+server side the SDK checks the challenge properly — sequence 0, the anchor's own
+source account, manage_data only, the first operation sourced by the user's
+account and naming this home domain — and refuses anything else.
+
+The anchor pays into **this device's own address**, which only this device can
+sign for, because the device key is a non-extractable `CryptoKey`.
+
+The relayer will only talk to anchors it has been configured for. A domain
+arriving from a browser and being fetched is an SSRF, and the fact that the
+target is "just a stellar.toml" is no defence — the URL is the attack.
 
 ### The risk an agent is actually taking
 
@@ -105,6 +160,7 @@ The static wallet needs nothing. The relayer needs an account to pay fees from:
 | `LASTMILE_VAULT` | the vault contract | the deployed testnet vault |
 | `LASTMILE_RPC` | Soroban RPC | testnet |
 | `LASTMILE_PASSPHRASE` | network passphrase | testnet |
+| `LASTMILE_ANCHORS` | comma-separated anchor domains the relayer may fetch | `testanchor.stellar.org` |
 
 ```
 npx vercel deploy --prod
@@ -120,12 +176,26 @@ never signs for the payment — only for the transaction envelope that carries i
 npm test
 ```
 
-**49 browser checks** through a real browser at phone size: signing, accepting,
+**69 browser checks** through a real browser at phone size: signing, accepting,
 tampering, a mistyped address, the key surviving a reload, the whole thing
 working with the network switched off, the key being genuinely unexportable, an
 old localStorage key being migrated and wiped, every state banking can end in —
 including that with no signal the wallet says so rather than pretending — and
 the cash desk end to end, with every screen made to agree on the same figure.
+
+**19 ramp checks and 6 relayer checks.** The wallet signs a hash it cannot read,
+so these are all attempts to get a signature out of it: a challenge signed by the
+wrong key, a genuine anchor signature swapped onto different bytes, a relayer
+reporting a signing key the anchor does not publish, a truncated hash. Each has
+to be refused *and* to leave the device key untouched. The relayer's own set is
+about the allowlist: cloud metadata addresses, suffix games, path traversal, and
+an array that stringifies to an allowed domain.
+
+Writing them found two things. The browser checks were passing while verifying
+nothing, because `Uint8Array.toString('hex')` is `"147,211,34,…"` and says
+nothing about it — so every signature was unreadable and every one was refused,
+including the honest one. And the relayer was fetching the anchor before
+validating the request, so a malformed post still cost a round trip.
 
 **16 cash checks.** An agent hands over real money against this arithmetic, so
 it is all integers in the smallest unit each side: currencies with no minor unit,
