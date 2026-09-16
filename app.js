@@ -422,9 +422,11 @@ async function bank(index) {
     if (!target) return; // removed by a concurrent call -- nothing to do
 
     if (res.ok) {
+      // Success: record the on-chain transaction details and mark banked.
       target.state = 'banked';
       target.hash = body.hash;
       target.ledger = body.ledger;
+      save(QUEUE, now);
     } else {
       target.state = 'refused';
       target.error = body.error ?? `The relayer answered ${res.status}.`;
