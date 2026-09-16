@@ -374,6 +374,9 @@ function humanError(body, httpStatus) {
   if (code === 3 || raw.includes('signature') || raw.includes('bad sig')) {
     return { plain: 'the voucher signature did not check out — it may have been altered' };
   }
+  if (code === 4 || raw.includes('underfund') || raw.includes('insufficient')) {
+    return { plain: "the payer's vault does not have enough XLM to cover this voucher" };
+  }
 }
 
 async function bank(index) {
