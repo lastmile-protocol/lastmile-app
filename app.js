@@ -511,7 +511,7 @@ function renderQueue() {
   el.innerHTML =
     noticeHtml +
     `<div class="big">${toXLM(total)} XLM</div>
-     <div class="sub">${held.length} voucher${held.length === 1 ? '' : 's'} held on this phone</div>` +
+     <div class="sub">${pending.length} voucher${pending.length === 1 ? '' : 's'} held on this phone</div>` +
     q.map((x, i) => {
       const state = x.state ?? 'held';
       const canBank = state === 'held' || state === 'refused';
