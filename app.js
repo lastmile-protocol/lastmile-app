@@ -383,6 +383,9 @@ function humanError(body, httpStatus) {
   if (httpStatus === 429 || raw.includes('too many')) {
     return { plain: 'too many requests in a row — wait a minute and try again' };
   }
+  if (httpStatus === 503 || raw.includes('not configured') || raw.includes('no submitting')) {
+    return { plain: 'this relay is not yet set up to settle vouchers — try another' };
+  }
 }
 
 async function bank(index) {
