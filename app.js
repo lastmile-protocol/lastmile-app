@@ -429,9 +429,14 @@ async function bank(index) {
       save(QUEUE, now);
     } else {
       const { plain, alreadyBanked } = humanError(body, res.status);
-      target.state = 'refused';
-      target.error = plain;
-      save(QUEUE, now);
+      if (alreadyBanked) {
+        now.splice(index, 1);
+        save(QUEUE, now);
+      } else {
+        target.state = 'refused';
+        target.error = plain;
+        save(QUEUE, now);
+      }
     }
   } catch (e) {
     const now = load(QUEUE, []);
