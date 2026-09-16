@@ -1,4 +1,5 @@
 // End-to-end check of the wallet, driven through a real browser.
+// Tests verify that offline banking buttons are disabled with descriptive labels
 // Starts its own static server on a free port and uses whichever Chromium
 // Playwright installed, so it runs the same on a laptop and in CI.
 const http = require('http');
