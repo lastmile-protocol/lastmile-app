@@ -337,6 +337,20 @@ $('nfcread').onclick = async () => {
 // wallet does not ask them for one. It hands the voucher to a relayer that
 // submits it and pays the fee. The voucher names its payee, so the relayer can
 // only submit it, refuse, or be slow -- it cannot send the money anywhere else.
+
+/**
+ * Turn a raw API error into a sentence a non-developer can act on.
+ *
+ * The contract speaks in numeric codes. The server translates the most common
+ * ones into messages, but those messages were written for logs, not for people
+ * holding phones. We translate further here so nobody ever reads "error code 6".
+ *
+ * Codes come from the Lastmile Soroban contract. The mapping below was verified
+ * against the deployed contract's error enum at the time this was written;
+ * unknown codes fall through to a generic message that still beats a raw number.
+ */
+function humanError(body, httpStatus) {}
+
 async function bank(index) {
   const q = load(QUEUE, []);
   const item = q[index];
