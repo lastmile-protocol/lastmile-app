@@ -430,9 +430,25 @@ async function bank(index) {
     } else {
       const { plain, alreadyBanked } = humanError(body, res.status);
       if (alreadyBanked) {
+        // The nonce has already been consumed on chain -- this voucher is
+        // settled. Remove it from the queue rather than leaving it as an
+        // error the user cannot fix. We store a brief notice so the screen
+        // updates meaningfully rather than just disappearing.
         now.splice(index, 1);
         save(QUEUE, now);
+        // Surface a one-time notice in the pending section so the removal is
+        // not silent. The notice lives in sessionStorage so it survives a
+        // renderQueue() call but is gone once the user navigates away.
+        try {
+          const notices = JSON.parse(sessionStorage.getItem('lastmile.notices.v1') ?? '[]');
+          notices.push({
+            text: `A ${toXLM(target.amount)} XLM voucher was already banked by someone else and has been removed.`,
+            at: Date.now(),
+          });
+          sessionStorage.setItem('lastmile.notices.v1', JSON.stringify(notices.slice(-5)));
+        } catch { /* sessionStorage may be unavailable in private mode */ }
       } else {
+        // Any other refusal: keep the voucher so the user can retry later.
         target.state = 'refused';
         target.error = plain;
         save(QUEUE, now);
