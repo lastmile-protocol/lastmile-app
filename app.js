@@ -521,7 +521,9 @@ function renderQueue() {
       return `<div class="queued">
         <div class="head">
           <strong>${toXLM(x.amount)} XLM</strong>
-          <span class="state ${tone[state]}">${label[state]}</span>
+          <span class="state ${tone[state] ?? ''}">` +
+            (label[state] ?? state) +
+          `</span>
         </div>
         ${x.hash ? `<p class="note mono">ledger ${x.ledger} · ${x.hash.slice(0, 16)}…</p>` : ''}
         ${x.error ? `<p class="note">${x.error}</p>` : ''}
