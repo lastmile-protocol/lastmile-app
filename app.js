@@ -396,9 +396,11 @@ function humanError(body, httpStatus) {
 }
 
 async function bank(index) {
+  // Guard: re-read the queue at call-time so an interleaved update cannot cause
+  // us to act on stale data. index is stable within a single render pass.
   const q = load(QUEUE, []);
   const item = q[index];
-  if (!item || item.state === 'banked') return;
+  if (!item || item.state === 'banked' || item.state === 'banking') return;
 
   item.state = 'banking';
   delete item.error;
