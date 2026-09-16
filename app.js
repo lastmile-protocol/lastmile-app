@@ -428,10 +428,11 @@ async function bank(index) {
       target.ledger = body.ledger;
       save(QUEUE, now);
     } else {
+      const { plain, alreadyBanked } = humanError(body, res.status);
       target.state = 'refused';
-      target.error = body.error ?? `The relayer answered ${res.status}.`;
+      target.error = plain;
+      save(QUEUE, now);
     }
-    save(QUEUE, now);
   } catch (e) {
     const now = load(QUEUE, []);
     if (now[index]) {
