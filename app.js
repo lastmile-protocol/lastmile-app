@@ -349,7 +349,12 @@ $('nfcread').onclick = async () => {
  * against the deployed contract's error enum at the time this was written;
  * unknown codes fall through to a generic message that still beats a raw number.
  */
-function humanError(body, httpStatus) {}
+function humanError(body, httpStatus) {
+  // The server already caught the most common contract refusals and wrote a
+  // message. Check for the "already spent" pattern before any fallthrough.
+  const raw = (body.error ?? '').toLowerCase();
+  const code = body.code;   // numeric contract error code, when present
+}
 
 async function bank(index) {
   const q = load(QUEUE, []);
