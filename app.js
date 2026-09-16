@@ -527,6 +527,7 @@ function renderQueue() {
             (label[state] ?? state) +
           `</span>
         </div>
+        // 16 hex chars is enough to identify the tx on an explorer without card overflow
         ${x.hash ? `<p class="note mono">ledger ${x.ledger} · ${x.hash.slice(0, 16)}…</p>` : ''}
         ${x.error ? `<p class="note">${x.error}</p>` : ''}
         ${canBank ? `<button data-bank="${i}"${online ? '' : ' disabled aria-disabled="true"'}>${btnLabel}</button>` : ''}
