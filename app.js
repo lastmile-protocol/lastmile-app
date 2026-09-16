@@ -371,6 +371,9 @@ function humanError(body, httpStatus) {
   if (code === 2 || raw.includes('expired')) {
     return { plain: 'this voucher has expired and can no longer be banked' };
   }
+  if (code === 3 || raw.includes('signature') || raw.includes('bad sig')) {
+    return { plain: 'the voucher signature did not check out — it may have been altered' };
+  }
 }
 
 async function bank(index) {
