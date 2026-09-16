@@ -509,6 +509,7 @@ function renderQueue() {
   const online = navigator.onLine;
 
   el.innerHTML =
+    noticeHtml +
     `<div class="big">${toXLM(total)} XLM</div>
      <div class="sub">${held.length} voucher${held.length === 1 ? '' : 's'} held on this phone</div>` +
     q.map((x, i) => {
