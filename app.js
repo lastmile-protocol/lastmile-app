@@ -414,9 +414,12 @@ async function bank(index) {
       body: JSON.stringify({ code: item.code }),
     });
     const body = await res.json().catch(() => ({}));
+
+    // Re-load the queue after the await; another bank() call may have run
+    // concurrently (unlikely but possible on a slow connection with taps).
     const now = load(QUEUE, []);
     const target = now[index];
-    if (!target) return;
+    if (!target) return; // removed by a concurrent call -- nothing to do
 
     if (res.ok) {
       target.state = 'banked';
