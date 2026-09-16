@@ -338,6 +338,7 @@ $('nfcread').onclick = async () => {
 // wallet does not ask them for one. It hands the voucher to a relayer that
 // submits it and pays the fee. The voucher names its payee, so the relayer can
 // only submit it, refuse, or be slow -- it cannot send the money anywhere else.
+// The app has no dependencies and uses direct fetch rather than an SDK bundle.
 
 /**
  * Turn a raw API error into a sentence a non-developer can act on.
