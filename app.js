@@ -389,6 +389,10 @@ function humanError(body, httpStatus) {
   if (httpStatus >= 500) {
     return { plain: `the relay could not reach the network (${httpStatus}) — keep the voucher and try later` };
   }
+  // Fall back to whatever the server said, trimmed, with a lower-case first letter.
+  const msg = body.error ?? `the relay answered ${httpStatus}`;
+  return { plain: msg.charAt(0).toLowerCase() + msg.slice(1) };
+}
 }
 
 async function bank(index) {
