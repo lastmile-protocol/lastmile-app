@@ -504,6 +504,10 @@ function renderQueue() {
   };
   const tone = { held: '', banking: 'busy', banked: 'ok', refused: 'bad' };
 
+  // When offline the button is rendered disabled with the reason in its label
+  // rather than as a tooltip, because tooltips do not appear on touch screens.
+  const online = navigator.onLine;
+
   el.innerHTML =
     `<div class="big">${toXLM(total)} XLM</div>
      <div class="sub">${held.length} voucher${held.length === 1 ? '' : 's'} held on this phone</div>` +
