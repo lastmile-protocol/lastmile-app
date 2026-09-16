@@ -478,12 +478,12 @@ function renderQueue() {
   // elsewhere") before we render the queue. Each notice is shown once.
   let noticeHtml = '';
   try {
-    const notices = JSON.parse(sessionStorage.getItem('lastmile.notices.v1') ?? '[]');
+    const notices = JSON.parse(sessionStorage.getItem(NOTICES) ?? '[]');
     if (notices.length) {
       noticeHtml = notices
         .map((n) => `<div class="msg bad" style="margin-bottom:10px">${n.text}</div>`)
         .join('');
-      sessionStorage.removeItem('lastmile.notices.v1');
+      sessionStorage.removeItem(NOTICES);
     }
   } catch { /* ignore */ }
 
