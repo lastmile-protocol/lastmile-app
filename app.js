@@ -368,6 +368,9 @@ function humanError(body, httpStatus) {
       raw.includes('nonce') || raw.includes('spent') || raw.includes('replay')) {
     return { plain: 'already banked by someone else', alreadyBanked: true };
   }
+  if (code === 2 || raw.includes('expired')) {
+    return { plain: 'this voucher has expired and can no longer be banked' };
+  }
 }
 
 async function bank(index) {
