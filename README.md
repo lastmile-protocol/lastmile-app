@@ -132,6 +132,10 @@ the transaction hash and ledger sequence are displayed.
 When the device is offline, the submit button is automatically disabled with
 "Bank it — needs a connection", preventing confusing failed submissions.
 
+Failures are explained in plain words rather than numeric codes: 'already banked by
+someone else' instead of error code 6, 'this voucher has expired' instead of code 2,
+and 'payer vault underfunded' instead of code 4.
+
 The payee is the person least likely to have a funded Stellar account: they are
 in the place with no signal, which is usually also the place with no exchange.
 So the wallet does not ask them for one. It hands the voucher to a **relayer**
