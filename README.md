@@ -129,6 +129,9 @@ the **Wallet** tab. Banking submits the signed authorization struct to the relay
 verifies simulation on testnet, and writes the settlement on-chain. On success,
 the transaction hash and ledger sequence are displayed.
 
+When the device is offline, the submit button is automatically disabled with
+"Bank it — needs a connection", preventing confusing failed submissions.
+
 The payee is the person least likely to have a funded Stellar account: they are
 in the place with no signal, which is usually also the place with no exchange.
 So the wallet does not ask them for one. It hands the voucher to a **relayer**
