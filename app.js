@@ -455,12 +455,13 @@ async function bank(index) {
       }
     }
   } catch (e) {
+    // Network-level failure (fetch itself threw). The voucher is intact.
     const now = load(QUEUE, []);
     if (now[index]) {
       now[index].state = 'refused';
       now[index].error = navigator.onLine
-        ? `Could not reach the relayer: ${e.message}`
-        : 'No signal. The voucher is safe here; bank it when you have a connection.';
+        ? `could not reach the relay — check your connection and try again`
+        : 'no signal — the voucher is safe here, bank it when you are back online';
       save(QUEUE, now);
     }
   }
