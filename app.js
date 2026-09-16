@@ -377,6 +377,9 @@ function humanError(body, httpStatus) {
   if (code === 4 || raw.includes('underfund') || raw.includes('insufficient')) {
     return { plain: "the payer's vault does not have enough XLM to cover this voucher" };
   }
+  if (code === 5 || raw.includes('wrong payee') || raw.includes('payee')) {
+    return { plain: 'this voucher was written for a different address' };
+  }
 }
 
 async function bank(index) {
