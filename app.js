@@ -515,6 +515,9 @@ function renderQueue() {
     q.map((x, i) => {
       const state = x.state ?? 'held';
       const canBank = state === 'held' || state === 'refused';
+      const btnLabel = online
+        ? (state === 'refused' ? 'Try again' : 'Bank it')
+        : 'Bank it — needs a connection';
       return `<div class="queued">
         <div class="head">
           <strong>${toXLM(x.amount)} XLM</strong>
