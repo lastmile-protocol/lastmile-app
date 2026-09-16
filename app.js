@@ -401,7 +401,7 @@ function humanError(body, httpStatus) {
 
 async function bank(index) {
   // Guard: re-read the queue at call-time so an interleaved update cannot cause
-  // a race condition on rapid clicks.
+  // a race condition on rapid clicks. Stable within a single render pass.
   // us to act on stale data. index is stable within a single render pass.
   const q = load(QUEUE, []);
   const item = q[index];
