@@ -441,12 +441,12 @@ async function bank(index) {
         // not silent. The notice lives in sessionStorage so it survives a
         // renderQueue() call but is gone once the user navigates away.
         try {
-          const notices = JSON.parse(sessionStorage.getItem('lastmile.notices.v1') ?? '[]');
+          const notices = JSON.parse(sessionStorage.getItem(NOTICES) ?? '[]');
           notices.push({
             text: `A ${toXLM(target.amount)} XLM voucher was already banked by someone else and has been removed.`,
             at: Date.now(),
           });
-          sessionStorage.setItem('lastmile.notices.v1', JSON.stringify(notices.slice(-5)));
+          sessionStorage.setItem(NOTICES, JSON.stringify(notices.slice(-5)));
         } catch { /* sessionStorage may be unavailable in private mode */ }
       } else {
         // Any other refusal: keep the voucher so the user can retry later.
