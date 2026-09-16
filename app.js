@@ -380,6 +380,9 @@ function humanError(body, httpStatus) {
   if (code === 5 || raw.includes('wrong payee') || raw.includes('payee')) {
     return { plain: 'this voucher was written for a different address' };
   }
+  if (httpStatus === 429 || raw.includes('too many')) {
+    return { plain: 'too many requests in a row — wait a minute and try again' };
+  }
 }
 
 async function bank(index) {
