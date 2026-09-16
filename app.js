@@ -386,6 +386,9 @@ function humanError(body, httpStatus) {
   if (httpStatus === 503 || raw.includes('not configured') || raw.includes('no submitting')) {
     return { plain: 'this relay is not yet set up to settle vouchers — try another' };
   }
+  if (httpStatus >= 500) {
+    return { plain: `the relay could not reach the network (${httpStatus}) — keep the voucher and try later` };
+  }
 }
 
 async function bank(index) {
