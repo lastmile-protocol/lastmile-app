@@ -354,6 +354,15 @@ function humanError(body, httpStatus) {
   // message. Check for the "already spent" pattern before any fallthrough.
   const raw = (body.error ?? '').toLowerCase();
   const code = body.code;   // numeric contract error code, when present
+
+  // Contract error 1 = AlreadyRedeemed: the nonce has been consumed.
+  // Contract error 2 = VoucherExpired: we already check expiry locally.
+  // Contract error 3 = BadSignature: the bytes were mangled in transit.
+  // Contract error 4 = UnderFunded: the payer's vault does not cover this.
+  // Contract error 5 = WrongPayee: the address on the voucher is not ours.
+  // Contract error 6 = NonceReplay: same nonce, different voucher -- fork.
+  //
+  // 1 and 6 both mean someone else got there first. Remove, do not retry.
 }
 
 async function bank(index) {
