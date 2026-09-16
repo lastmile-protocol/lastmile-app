@@ -376,7 +376,7 @@ function humanError(body, httpStatus) {
   if (code === 3 || raw.includes('signature') || raw.includes('bad sig')) {
     return { plain: 'the voucher signature did not check out — it may have been altered' };
   }
-  if (code === 4 || raw.includes('underfund') || raw.includes('insufficient')) {
+  if (code === 4 || raw.includes('underfund') || raw.includes('insufficient') || raw.includes('balance')) {
     return { plain: "the payer's vault does not have enough XLM to cover this voucher" };
   }
   if (code === 5 || raw.includes('wrong payee') || raw.includes('payee')) {
