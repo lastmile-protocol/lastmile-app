@@ -363,6 +363,11 @@ function humanError(body, httpStatus) {
   // Contract error 6 = NonceReplay: same nonce, different voucher -- fork.
   //
   // 1 and 6 both mean someone else got there first. Remove, do not retry.
+  if (code === 1 || code === 6 ||
+      raw.includes('already redeemed') || raw.includes('already spent') ||
+      raw.includes('nonce') || raw.includes('spent') || raw.includes('replay')) {
+    return { plain: 'already banked by someone else', alreadyBanked: true };
+  }
 }
 
 async function bank(index) {
