@@ -497,9 +497,9 @@ function renderQueue() {
   const total = pending.reduce((a, x) => a + BigInt(x.amount), 0n);
 
   const label = {
-    held: 'not yet banked',
+    held:    'not yet banked',
     banking: 'banking…',
-    banked: 'banked',
+    banked:  'banked',
     refused: 'not banked',
   };
   const tone = { held: '', banking: 'busy', banked: 'ok', refused: 'bad' };
