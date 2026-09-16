@@ -28,7 +28,8 @@ self.addEventListener('fetch', (e) => {
   // Freshness there is the security property, so this never touches it.
   if (url.origin !== self.location.origin) return;
   // Banking asks the network a question only the network can answer. A cached
-  // "yes, already banked" would be worse than no answer at all.
+  // "yes, already banked" would be worse than no answer at all. All /api/ requests
+  // bypass the service worker cache unconditionally.
   if (url.pathname.includes('/api/')) return;
   e.respondWith(caches.match(e.request).then((hit) => hit || fetch(e.request)));
 });
