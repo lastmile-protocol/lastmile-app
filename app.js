@@ -21,6 +21,7 @@ const TRADES = 'lastmile.trades.v1'; // cash that changed hands
 const FLOAT = 'lastmile.float.v1';   // last reading of our own offline float
 const RAMPS = 'lastmile.ramps.v1';   // anchor deposits and withdrawals in flight
 const ANCHOR = 'lastmile.anchor.v1'; // the anchor domain this wallet last used
+const NOTICES = 'lastmile.notices.v1'; // transient UI notices (e.g. vouchers banked elsewhere)
 
 let device = null;
 
