@@ -29,6 +29,7 @@ let device = null;
 // A voucher names its payee, so a copied code cannot pay anyone else -- it is
 // not a bearer instrument, and keeping the queue here costs nobody anything.
 // localStorage can throw in private windows, so never assume it.
+// Queue persistence is durable: vouchers are never dropped on network errors.
 const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
 const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
 
