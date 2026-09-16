@@ -472,7 +472,24 @@ function renderQueue() {
   const q = load(QUEUE, []);
   const el = $('pending');
   if (!el) return;
-  if (!q.length) { el.innerHTML = '<p class="sub">Nothing accepted yet.</p>'; return; }
+
+  // Show any one-time notices from the bank() function (e.g. "already banked
+  // elsewhere") before we render the queue. Each notice is shown once.
+  let noticeHtml = '';
+  try {
+    const notices = JSON.parse(sessionStorage.getItem('lastmile.notices.v1') ?? '[]');
+    if (notices.length) {
+      noticeHtml = notices
+        .map((n) => `<div class="msg bad" style="margin-bottom:10px">${n.text}</div>`)
+        .join('');
+      sessionStorage.removeItem('lastmile.notices.v1');
+    }
+  } catch { /* ignore */ }
+
+  if (!q.length) {
+    el.innerHTML = noticeHtml + '<p class="sub">Nothing accepted yet.</p>';
+    return;
+  }
 
   const held = q.filter((x) => x.state !== 'banked');
   const total = held.reduce((a, x) => a + BigInt(x.amount), 0n);
