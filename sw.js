@@ -20,6 +20,7 @@ self.addEventListener('activate', (e) => {
 });
 
 // Cache first. The app is self-contained, so the network is never the better answer.
+// Freshness is preserved by bypassing the cache exclusively for dynamic anchor & relayer APIs.
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
   const url = new URL(e.request.url);
