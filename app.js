@@ -491,8 +491,10 @@ function renderQueue() {
     return;
   }
 
-  const held = q.filter((x) => x.state !== 'banked');
-  const total = held.reduce((a, x) => a + BigInt(x.amount), 0n);
+  // Only count vouchers that are still in flight for the running total.
+  // Banked vouchers have left the phone; 'banked-elsewhere' is gone too.
+  const pending = q.filter((x) => x.state !== 'banked');
+  const total = pending.reduce((a, x) => a + BigInt(x.amount), 0n);
 
   const label = {
     held: 'not yet banked',
