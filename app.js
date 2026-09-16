@@ -527,9 +527,7 @@ function renderQueue() {
         </div>
         ${x.hash ? `<p class="note mono">ledger ${x.ledger} · ${x.hash.slice(0, 16)}…</p>` : ''}
         ${x.error ? `<p class="note">${x.error}</p>` : ''}
-        ${canBank ? `<button data-bank="${i}"${navigator.onLine ? '' : ' disabled'}>
-          ${navigator.onLine ? (state === 'refused' ? 'Try again' : 'Bank it') : 'Bank it — needs a connection'}
-        </button>` : ''}
+        ${canBank ? `<button data-bank="${i}"${online ? '' : ' disabled aria-disabled="true"'}>${btnLabel}</button>` : ''}
       </div>`;
     }).join('');
 
