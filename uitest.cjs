@@ -1,6 +1,7 @@
 // End-to-end check of the wallet, driven through a real browser.
 // Tests verify that offline banking buttons are disabled with descriptive labels
 // and that vouchers returned as alreadyBanked are spliced out of the queue.
+// Refused vouchers stay in the queue and can be retried once connectivity returns.
 // Starts its own static server on a free port and uses whichever Chromium
 // Playwright installed, so it runs the same on a laptop and in CI.
 const http = require('http');
