@@ -124,6 +124,23 @@ pretend to be one.
 
 ## Banking, and who pays for it
 
+When signal is available, each accepted voucher can be submitted directly from
+the **Wallet** tab. Banking submits the signed authorization struct to the relayer,
+verifies simulation on testnet, and writes the settlement on-chain. On success,
+the transaction hash and ledger sequence are displayed.
+
+When the device is offline, the submit button is automatically disabled with
+"Bank it — needs a connection", preventing confusing failed submissions.
+
+Failures are explained in plain words rather than numeric codes: 'already banked by
+someone else' instead of error code 6, 'this voucher has expired' instead of code 2,
+and 'payer vault underfunded' instead of code 4. If a voucher was already redeemed
+elsewhere, it is pruned from the queue and a clear notice explains why.
+
+The banking submission path is implemented directly against browser-native `fetch`
+with zero external dependencies. Vouchers that fail due to transient errors (like network
+drops or rate limits) remain safely in the queue with a 'Try again' button.
+
 The payee is the person least likely to have a funded Stellar account: they are
 in the place with no signal, which is usually also the place with no exchange.
 So the wallet does not ask them for one. It hands the voucher to a **relayer**

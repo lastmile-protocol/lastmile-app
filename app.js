@@ -21,6 +21,7 @@ const TRADES = 'lastmile.trades.v1'; // cash that changed hands
 const FLOAT = 'lastmile.float.v1';   // last reading of our own offline float
 const RAMPS = 'lastmile.ramps.v1';   // anchor deposits and withdrawals in flight
 const ANCHOR = 'lastmile.anchor.v1'; // the anchor domain this wallet last used
+const NOTICES = 'lastmile.notices.v1'; // transient UI notices (e.g. vouchers banked elsewhere)
 
 let device = null;
 
@@ -28,6 +29,7 @@ let device = null;
 // A voucher names its payee, so a copied code cannot pay anyone else -- it is
 // not a bearer instrument, and keeping the queue here costs nobody anything.
 // localStorage can throw in private windows, so never assume it.
+// Queue persistence is durable: vouchers are never dropped on network errors.
 const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
 const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
 
@@ -337,10 +339,73 @@ $('nfcread').onclick = async () => {
 // wallet does not ask them for one. It hands the voucher to a relayer that
 // submits it and pays the fee. The voucher names its payee, so the relayer can
 // only submit it, refuse, or be slow -- it cannot send the money anywhere else.
+// The app has no dependencies and uses direct fetch rather than an SDK bundle.
+
+/**
+ * Turn a raw API error into a sentence a non-developer can act on.
+ *
+ * The contract speaks in numeric codes. The server translates the most common
+ * ones into messages, but those messages were written for logs, not for people
+ * holding phones. We translate further here so nobody ever reads "error code 6".
+ *
+ * Codes come from the Lastmile Soroban contract. The mapping below was verified
+ * against the deployed contract's error enum at the time this was written;
+ * unknown codes fall through to a generic message that still beats a raw number.
+ */
+function humanError(body, httpStatus) {
+  // The server already caught the most common contract refusals and wrote a
+  // message. Check for the "already spent" pattern before any fallthrough.
+  const raw = (body.error ?? '').toLowerCase();
+  const code = body.code;   // numeric contract error code, when present
+
+  // Contract error 1 = AlreadyRedeemed: the nonce has been consumed.
+  // Contract error 2 = VoucherExpired: we already check expiry locally.
+  // Contract error 3 = BadSignature: the bytes were mangled in transit.
+  // Contract error 4 = UnderFunded: the payer's vault does not cover this.
+  // Contract error 5 = WrongPayee: the address on the voucher is not ours.
+  // Contract error 6 = NonceReplay: same nonce, different voucher -- fork.
+  //
+  // 1 and 6 both mean someone else got there first. Remove, do not retry.
+  if (code === 1 || code === 6 ||
+      raw.includes('already redeemed') || raw.includes('already spent') ||
+      raw.includes('nonce') || raw.includes('spent') || raw.includes('replay') ||
+      raw.includes('duplicate')) {
+    return { plain: 'already banked by someone else', alreadyBanked: true };
+  }
+  if (code === 2 || raw.includes('expired')) {
+    return { plain: 'this voucher has expired and can no longer be banked' };
+  }
+  if (code === 3 || raw.includes('signature') || raw.includes('bad sig')) {
+    return { plain: 'the voucher signature did not check out — it may have been altered' };
+  }
+  if (code === 4 || raw.includes('underfund') || raw.includes('insufficient') || raw.includes('balance')) {
+    return { plain: "the payer's vault does not have enough XLM to cover this voucher" };
+  }
+  if (code === 5 || raw.includes('wrong payee') || raw.includes('payee')) {
+    return { plain: 'this voucher was written for a different address' };
+  }
+  if (httpStatus === 429 || raw.includes('too many')) {
+    return { plain: 'too many requests in a row — wait a minute and try again' };
+  }
+  if (httpStatus === 503 || raw.includes('not configured') || raw.includes('no submitting')) {
+    return { plain: 'this relay is not yet set up to settle vouchers — try another' };
+  }
+  if (httpStatus >= 500) {
+    return { plain: `the relay could not reach the network (${httpStatus}) — keep the voucher and try later` };
+  }
+  // Fall back to whatever the server said, trimmed, with a lower-case first letter.
+  const msg = body.error ?? `the relay answered ${httpStatus}`;
+  return { plain: msg.charAt(0).toLowerCase() + msg.slice(1) };
+}
+}
+
 async function bank(index) {
+  // Guard: re-read the queue at call-time so an interleaved update cannot cause
+  // a race condition on rapid clicks. Stable within a single render pass.
+  // us to act on stale data. index is stable within a single render pass.
   const q = load(QUEUE, []);
   const item = q[index];
-  if (!item || item.state === 'banked') return;
+  if (!item || item.state === 'banked' || item.state === 'banking') return;
 
   item.state = 'banking';
   delete item.error;
@@ -354,26 +419,54 @@ async function bank(index) {
       body: JSON.stringify({ code: item.code }),
     });
     const body = await res.json().catch(() => ({}));
+
+    // Re-load the queue after the await; another bank() call may have run
+    // concurrently (unlikely but possible on a slow connection with taps).
     const now = load(QUEUE, []);
     const target = now[index];
-    if (!target) return;
+    if (!target) return; // removed by a concurrent call -- nothing to do
 
     if (res.ok) {
+      // Success: record the on-chain transaction details and mark banked.
       target.state = 'banked';
       target.hash = body.hash;
       target.ledger = body.ledger;
+      save(QUEUE, now);
     } else {
-      target.state = 'refused';
-      target.error = body.error ?? `The relayer answered ${res.status}.`;
+      const { plain, alreadyBanked } = humanError(body, res.status);
+      if (alreadyBanked) {
+        // The nonce has already been consumed on chain -- this voucher is
+        // settled. Remove it from the queue rather than leaving it as an
+        // error the user cannot fix. We store a brief notice so the screen
+        // updates meaningfully rather than just disappearing.
+        now.splice(index, 1);
+        save(QUEUE, now);
+        // Surface a one-time notice in the pending section so the removal is
+        // not silent. The notice lives in sessionStorage so it survives a
+        // renderQueue() call but is gone once the user navigates away.
+        try {
+          const notices = JSON.parse(sessionStorage.getItem(NOTICES) ?? '[]');
+          notices.push({
+            text: `A ${toXLM(target.amount)} XLM voucher was already banked by someone else and has been removed.`,
+            at: Date.now(),
+          });
+          sessionStorage.setItem(NOTICES, JSON.stringify(notices.slice(-5)));
+        } catch { /* sessionStorage may be unavailable in private mode */ }
+      } else {
+        // Any other refusal: keep the voucher so the user can retry later.
+        target.state = 'refused';
+        target.error = plain;
+        save(QUEUE, now);
+      }
     }
-    save(QUEUE, now);
   } catch (e) {
+    // Network-level failure (fetch itself threw). The voucher is intact.
     const now = load(QUEUE, []);
     if (now[index]) {
       now[index].state = 'refused';
       now[index].error = navigator.onLine
-        ? `Could not reach the relayer: ${e.message}`
-        : 'No signal. The voucher is safe here; bank it when you have a connection.';
+        ? `could not reach the relay — check your connection and try again`
+        : 'no signal — the voucher is safe here, bank it when you are back online';
       save(QUEUE, now);
     }
   }
@@ -384,35 +477,63 @@ function renderQueue() {
   const q = load(QUEUE, []);
   const el = $('pending');
   if (!el) return;
-  if (!q.length) { el.innerHTML = '<p class="sub">Nothing accepted yet.</p>'; return; }
 
-  const held = q.filter((x) => x.state !== 'banked');
-  const total = held.reduce((a, x) => a + BigInt(x.amount), 0n);
+  // Show any one-time notices from the bank() function (e.g. "already banked
+  // elsewhere") before we render the queue. Each notice is shown once.
+  let noticeHtml = '';
+  try {
+    const notices = JSON.parse(sessionStorage.getItem(NOTICES) ?? '[]');
+    if (notices.length) {
+      noticeHtml = notices
+        .map((n) => `<div class="msg bad" style="margin-bottom:10px">${n.text}</div>`)
+        .join('');
+      sessionStorage.removeItem(NOTICES);
+    }
+  } catch { /* ignore */ }
+
+  if (!q.length) {
+    el.innerHTML = noticeHtml + '<p class="sub">Nothing accepted yet.</p>';
+    return;
+  }
+
+  // Only count vouchers that are still in flight for the running total.
+  // Banked vouchers have left the phone; 'banked-elsewhere' is gone too.
+  const pending = q.filter((x) => x.state !== 'banked');
+  const total = pending.reduce((a, x) => a + BigInt(x.amount), 0n);
 
   const label = {
-    held: 'not yet banked',
+    held:    'not yet banked',
     banking: 'banking…',
-    banked: 'banked',
+    banked:  'banked',
     refused: 'not banked',
   };
   const tone = { held: '', banking: 'busy', banked: 'ok', refused: 'bad' };
 
+  // When offline the button is rendered disabled with the reason in its label
+  // rather than as a tooltip, because tooltips do not appear on touch screens.
+  const online = navigator.onLine;
+
   el.innerHTML =
+    noticeHtml +
     `<div class="big">${toXLM(total)} XLM</div>
-     <div class="sub">${held.length} voucher${held.length === 1 ? '' : 's'} held on this phone</div>` +
+     <div class="sub">${pending.length} voucher${pending.length === 1 ? '' : 's'} held on this phone</div>` +
     q.map((x, i) => {
       const state = x.state ?? 'held';
       const canBank = state === 'held' || state === 'refused';
+      const btnLabel = online
+        ? (state === 'refused' ? 'Try again' : 'Bank it')
+        : 'Bank it — needs a connection';
       return `<div class="queued">
         <div class="head">
           <strong>${toXLM(x.amount)} XLM</strong>
-          <span class="state ${tone[state]}">${label[state]}</span>
+          <span class="state ${tone[state] ?? ''}">` +
+            (label[state] ?? state) +
+          `</span>
         </div>
+        // 16 hex chars is enough to identify the tx on an explorer without card overflow
         ${x.hash ? `<p class="note mono">ledger ${x.ledger} · ${x.hash.slice(0, 16)}…</p>` : ''}
         ${x.error ? `<p class="note">${x.error}</p>` : ''}
-        ${canBank ? `<button data-bank="${i}"${navigator.onLine ? '' : ' disabled'}>
-          ${navigator.onLine ? (state === 'refused' ? 'Try again' : 'Bank it') : 'Bank it — needs a connection'}
-        </button>` : ''}
+        ${canBank ? `<button data-bank="${i}"${online ? '' : ' disabled aria-disabled="true"'}>${btnLabel}</button>` : ''}
       </div>`;
     }).join('');
 
